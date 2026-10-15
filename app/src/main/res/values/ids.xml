@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tags the reader WebView with the chapter it is currently showing. -->
+    <item name="shelf_chapter_revision" type="id" />
+    <!-- Tags it with the reading settings already applied to that page. -->
+    <item name="shelf_settings_key" type="id" />
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shelf_ink">#14161B</color>
+    <color name="shelf_panel">#1B1E25</color>
+    <color name="shelf_rose">#DD8FAE</color>
+    <color name="shelf_text">#E6E3DD</color>
+</resources>
