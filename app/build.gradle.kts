@@ -21,9 +21,9 @@ android {
         applicationId = "com.shelf.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.1"
-        val updateRepository = providers.gradleProperty("updateRepository").orElse("thinh2000tiger-lang/ShelfAndroid").get()
+        versionCode = 7
+        versionName = "0.3.2"
+        val updateRepository = providers.gradleProperty("updateRepository").orElse("Vengeful-Pancake/ShelfAndroid").get()
         require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

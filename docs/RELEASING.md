@@ -1,8 +1,10 @@
 # Publishing source and signed updates
 
-Target repository: `thinh2000tiger-lang/ShelfAndroid` (public). The original
-`origin` is the upstream `Vengeful-Pancake/ShelfAndroid`; publishing uses a
-separate `publish` remote and never force-pushes over remote changes.
+Confirmed publishing account/repository: `Vengeful-Pancake/ShelfAndroid`
+(public). The CLI authenticated as the repository owner. Both `origin` and the
+separate `publish` remote refer to this repository. Publishing never force-pushes
+over remote changes. The earlier thinh2000tiger-lang target was an unpublished
+local plan based on the connector account, not the authenticated CLI account.
 
 ## One-time sign-in
 

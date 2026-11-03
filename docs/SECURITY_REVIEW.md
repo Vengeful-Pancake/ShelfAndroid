@@ -1,5 +1,22 @@
 # Local security review — 29 October 2026
 
+## Confirmed publication target 0.3.2 — 3 November 2026
+
+The user completed GitHub CLI authentication as Vengeful-Pancake. The CLI
+confirmed ADMIN permission on the existing public Vengeful-Pancake/ShelfAndroid
+repository. The updater and publishing defaults now use this confirmed original
+repository instead of the provisional connector-account target mentioned in the
+unpublished 0.3.1 notes below. No signing-key change is involved.
+
+VersionCode 7 / versionName 0.3.2 passed release assembly, JVM checks and release
+lint after the endpoint change. The earlier five emulator tests exercised the
+same updater/package-validation implementation. The publisher additionally
+checks APK package/version metadata against the committed Gradle configuration
+and the release certificate against the public pinned fingerprint.
+
+APK SHA-256: `59e18bf6237171053c83d7917ce79871736b32f029093635f809ef2f8aa56690`.
+Install 0.3.2 once over old/local builds to bootstrap the correct public updater.
+
 ## User-requested GitHub updater 0.3.1 — 3 November 2026
 
 The project user requested publication of source + bundled dictionaries + APK

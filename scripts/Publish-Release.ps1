@@ -1,5 +1,5 @@
 param(
-    [string]$Repository = 'thinh2000tiger-lang/ShelfAndroid',
+    [string]$Repository = 'Vengeful-Pancake/ShelfAndroid',
     [string]$GhPath,
     [switch]$SkipBuild
 )
@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not verify GitHub account' }
 if ($Repository.Split('/')[0] -ne $login.Trim()) { throw 'This publisher only creates repositories under the authenticated account' }
 $accountId = & $GhPath api user --jq .id
 if ($LASTEXITCODE -ne 0 -or $accountId -notmatch '^\d+$') { throw 'Could not verify GitHub account ID' }
-if ($SkipBuild -and $Repository -ne 'thinh2000tiger-lang/ShelfAndroid') { throw 'Changing update repository requires a fresh build' }
+if ($SkipBuild -and $Repository -ne 'Vengeful-Pancake/ShelfAndroid') { throw 'Changing update repository requires a fresh build' }
 $dirty = git status --porcelain
 if ($dirty) { throw 'Commit reviewed source changes before publishing' }
 $tracked = git ls-files
@@ -41,6 +41,15 @@ $buildTools = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Obj
 $signer = Join-Path $buildTools.FullName 'apksigner.bat'
 $apk = Join-Path $root "app/build/outputs/apk/release/Shelf-$version.apk"
 Copy-Item -LiteralPath 'app/build/outputs/apk/release/app-release.apk' -Destination $apk
+$aapt = Join-Path $buildTools.FullName 'aapt.exe'
+$badging = & $aapt dump badging $apk
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect APK metadata' }
+$expectedCode = [regex]::Match($gradle, 'versionCode\s*=\s*(\d+)').Groups[1].Value
+$packageLine = $badging | Where-Object { $_ -like 'package:*' } | Select-Object -First 1
+if (-not $packageLine.Contains("name='com.shelf.reader'") -or
+    -not $packageLine.Contains("versionName='$version'") -or
+    -not $packageLine.Contains("versionCode='$expectedCode'") -or
+    ($badging | Where-Object { $_ -eq 'application-debuggable' })) { throw 'APK identity/version does not match reviewed source' }
 $certificateOutput = & $signer verify --print-certs $apk
 if ($LASTEXITCODE -ne 0) { throw 'Release APK signature verification failed' }
 $expectedCertificate = (Get-Content 'config/release-certificate.sha256' -Raw).Trim()

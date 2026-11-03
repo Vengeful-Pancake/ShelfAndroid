@@ -43,7 +43,7 @@ provenance is recorded in `app/src/main/assets/dictionaries/PROVENANCE.md`.
 <p align="center"><strong>A private, local-first EPUB reader for Android.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/thinh2000tiger-lang/ShelfAndroid/releases/latest"><strong>Download latest Shelf</strong></a>
+  <a href="https://github.com/Vengeful-Pancake/ShelfAndroid/releases/latest"><strong>Download latest Shelf</strong></a>
   &nbsp;|&nbsp;
   Android 8.0 or newer
   &nbsp;|&nbsp;
@@ -384,7 +384,7 @@ the book.
 
 ## Updates and security
 
-Version 0.3.1 checks the configured public GitHub repository for stable releases
+Version 0.3.2 checks the configured public GitHub repository for stable releases
 on startup/resume and every six hours while the app is active. The library menu
 also has **Kiểm tra cập nhật**. Download starts after user confirmation. SHA-256
 is mandatory; the APK must have the same package and signing certificate, a
@@ -394,8 +394,8 @@ HTTPS download hosts. Debug apps do not update themselves with release APKs.
 Installing a verified update requires Android's **Allow from this source**
 permission for Shelf and the system installer confirmation. The narrowly scoped
 update FileProvider exposes only cached updates. Installation is never silent;
-do not disable Play Protect. Old 0.3.0 and earlier builds must install 0.3.1 once
-manually before they can receive update prompts. Offline checks stay quiet.
+do not disable Play Protect. Install 0.3.2 once over older/local builds to receive
+future update prompts from the confirmed publishing repository. Offline checks stay quiet.
 
 The signing key remains on the maintainer's machine and is never published.
 See `docs/RELEASING.md` for the reviewed-source and signed-release workflow.
