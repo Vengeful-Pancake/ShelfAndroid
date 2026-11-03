@@ -11,6 +11,19 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -27,7 +40,7 @@ import com.shelf.reader.ui.library.LibraryScreen
 import com.shelf.reader.ui.opds.OpdsScreen
 import com.shelf.reader.ui.reader.ReaderScreen
 import com.shelf.reader.ui.theme.ShelfTheme
-import com.shelf.reader.update.AppUpdateCoordinator
+import com.shelf.reader.ui.dictionary.DictionaryScreen
 
 object Routes {
     const val LIBRARY = "library"
@@ -35,6 +48,7 @@ object Routes {
     const val READER = "reader/{bookId}"
     const val OPDS = "opds"
     const val BROWSER = "browser"
+    const val DICTIONARY = "dictionary"
     fun reader(bookId: String) = "reader/$bookId"
 }
 
@@ -52,6 +66,8 @@ class MainActivity : ComponentActivity() {
 private fun ShelfNavigation() {
     val nav = rememberNavController()
     val slide = tween<Float>(durationMillis = 180)
+    val entry by nav.currentBackStackEntryAsState()
+    val route = entry?.destination?.route
 
     Surface(
         modifier = Modifier
@@ -59,7 +75,31 @@ private fun ShelfNavigation() {
             .background(MaterialTheme.colorScheme.background),
         color = MaterialTheme.colorScheme.background,
     ) {
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
+            NavigationBar {
+                listOf(
+                    Triple(Routes.LIBRARY, "Books", Icons.AutoMirrored.Outlined.MenuBook),
+                    Triple(Routes.BROWSER, "Internet", Icons.Outlined.Language),
+                    Triple(Routes.DICTIONARY, "Dictionary", Icons.Outlined.Translate),
+                ).forEach { (destination, label, icon) ->
+                    val selected = if (destination == Routes.LIBRARY) route !in listOf(Routes.BROWSER, Routes.DICTIONARY) else route == destination
+                    NavigationBarItem(
+                        selected = selected,
+                        onClick = {
+                            if (!selected) nav.navigate(destination) {
+                                popUpTo(Routes.LIBRARY) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = { Icon(icon, contentDescription = label) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+        }) { padding ->
         NavHost(
+            modifier = Modifier.padding(padding),
             navController = nav,
             startDestination = Routes.LIBRARY,
             enterTransition = {
@@ -88,6 +128,7 @@ private fun ShelfNavigation() {
             composable(Routes.BROWSER) {
                 BrowserScreen(onBack = { nav.popBackStack() })
             }
+            composable(Routes.DICTIONARY) { DictionaryScreen() }
             composable(
                 route = Routes.READER,
                 arguments = listOf(navArgument("bookId") { type = NavType.StringType }),
@@ -98,7 +139,8 @@ private fun ShelfNavigation() {
                 )
             }
         }
+        }
     }
 
-    AppUpdateCoordinator()
+    com.shelf.reader.update.AppUpdateCoordinator()
 }

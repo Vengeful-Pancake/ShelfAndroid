@@ -65,11 +65,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -85,9 +89,18 @@ import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
+import org.json.JSONArray
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import com.shelf.reader.ShelfApp
+import com.shelf.reader.data.ReaderSettings
+import com.shelf.reader.translation.ChineseTranslator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONTokener
 
-private const val HOME_PAGE = "https://duckduckgo.com/"
+private const val HOME_PAGE = "https://sangtacviet.app/"
 
 data class WebArticle(
     val url: String,
@@ -95,6 +108,7 @@ data class WebArticle(
     val author: String,
     val language: String,
     val text: String,
+    val sourceText: String = text,
 )
 
 data class WebSpeechState(
@@ -257,16 +271,35 @@ fun BrowserScreen(
     val speech by viewModel.speech.collectAsStateWithLifecycle()
     val snackbars = remember { SnackbarHostState() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val translationSettings by remember { ShelfApp.repository(context).settings.flow }
+        .collectAsStateWithLifecycle(initialValue = ReaderSettings())
+    val latestSettings by rememberUpdatedState(translationSettings)
+    val translationScript = remember { context.assets.open("stv-reader.js").bufferedReader().use { it.readText() } }
 
     var webView by remember { mutableStateOf<WebView?>(null) }
     var address by remember { mutableStateOf(HOME_PAGE) }
-    var currentUrl by remember { mutableStateOf(HOME_PAGE) }
+    var currentUrl by rememberSaveable { mutableStateOf(HOME_PAGE) }
     var pageTitle by remember { mutableStateOf("Web browser") }
     var loading by remember { mutableStateOf(true) }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<WebArticle?>(null) }
+    // Browser extraction is transient: disposing/recreating a WebView clears it.
+    // Reader mode owns a snapshot so page callbacks cannot close or replace it.
+    var readerArticle by remember { mutableStateOf<WebArticle?>(null) }
     var readerMode by remember { mutableStateOf(false) }
+    var pageTranslated by remember { mutableStateOf(false) }
+    val savedWebState = rememberSaveable { android.os.Bundle() }
+    val translationBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+
+    LaunchedEffect(webView, translationSettings.translationEnabled, translationSettings.globalNames, translationSettings.globalTerms) {
+        webView?.evaluateJavascript(
+            if (translationSettings.translationEnabled) translationScript
+            else "if(window.shelfTranslator)window.shelfTranslator.dispose();", null)
+        article = null
+    }
 
     fun navigate() {
         val target = normalizeAddress(address)
@@ -297,18 +330,13 @@ fun BrowserScreen(
         onDispose { viewModel.stopSpeaking() }
     }
 
-    if (readerMode && article != null) {
-        ArticleReader(
-            article = article!!,
-            speech = speech,
+    if (readerMode && readerArticle != null) {
+        com.shelf.reader.ui.reader.InteractiveWebReader(
+            article = readerArticle!!,
             onBack = {
                 viewModel.stopSpeaking()
                 readerMode = false
             },
-            onToggleSpeaking = viewModel::toggleSpeaking,
-            onSpeed = viewModel::setSpeed,
-            onSeek = viewModel::seek,
-            snackbarHost = { SnackbarHost(snackbars) },
         )
         return
     }
@@ -328,8 +356,9 @@ fun BrowserScreen(
         onReload = { webView?.reload() },
         onHome = { address = HOME_PAGE; webView?.loadUrl(HOME_PAGE) },
         onReader = {
-            article?.let {
-                viewModel.setArticle(it)
+            article?.let { source ->
+                viewModel.stopSpeaking()
+                readerArticle = source
                 readerMode = true
             }
         },
@@ -356,6 +385,51 @@ fun BrowserScreen(
                         mediaPlaybackRequiresUserGesture = true
                     }
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                        try {
+                        WebViewCompat.addWebMessageListener(this, "ShelfTranslation", WebNavigationPolicy.translationOriginRules) {
+                            web, message, origin, mainFrame, reply ->
+                            val accepted = WebNavigationPolicy.acceptsTranslationOrigin(origin.toString(), web.url, mainFrame)
+                            val data = if (accepted && message.type == androidx.webkit.WebMessageCompat.TYPE_STRING) message.data else null
+                            if (data != null && data.length <= 200_000 &&
+                                translationBusy.compareAndSet(false, true)) scope.launch(Dispatchers.Main.immediate) {
+                                try {
+                                val response = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val request = JSONObject(data)
+                                        val texts = request.getJSONArray("texts")
+                                        require(texts.length() in 1..32)
+                                        require(request.getString("id").length in 1..80)
+                                        require((0 until texts.length()).sumOf { texts.getString(it).length } <= 32_000)
+                                        val translator = ChineseTranslator(context, latestSettings, com.shelf.reader.translation.NameStore.storyKey(currentUrl))
+                                        val translated = JSONArray()
+                                        for (i in 0 until texts.length()) {
+                                            val text = texts.getString(i)
+                                            require(text.length <= 32_000)
+                                            translated.put(translator.plain(text))
+                                        }
+                                        JSONObject().put("id", request.getString("id")).put("texts", translated)
+                                    }.getOrElse {
+                                        JSONObject().put("id", runCatching { JSONObject(data).optString("id") }.getOrDefault(""))
+                                            .put("error", "Translation failed")
+                                    }
+                                }
+                                if (webView === web && WebNavigationPolicy.acceptsTranslationOrigin(origin.toString(), web.url, true)) {
+                                    reply.postMessage(response.toString())
+                                    if (!response.has("error") && latestSettings.translationEnabled) pageTranslated = true
+                                    if (response.has("error")) snackbars.showSnackbar("Chinese translation failed; reload to retry")
+                                    web.evaluateJavascript(ARTICLE_SCRIPT) { raw -> article = decodeArticle(raw, currentUrl)?.let {
+                                        if (pageTranslated) it.copy(language = "vi") else it
+                                    } }
+                                }
+                                } finally { translationBusy.set(false) }
+                            }
+                        }
+                        } catch (error: RuntimeException) {
+                            android.util.Log.e("ShelfBrowser", "Web translation bridge could not be initialized", error)
+                            scope.launch { snackbars.showSnackbar("Page translation is unavailable in this WebView. Reader mode can still translate.") }
+                        }
+                    }
                     webChromeClient = object : WebChromeClient() {
                         override fun onReceivedTitle(view: WebView?, title: String?) {
                             pageTitle = title.orEmpty().ifBlank { "Web browser" }
@@ -365,6 +439,7 @@ fun BrowserScreen(
                         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                             loading = true
                             article = null
+                            pageTranslated = false
                             currentUrl = url
                             address = url
                             canGoBack = view.canGoBack()
@@ -377,6 +452,7 @@ fun BrowserScreen(
                             address = url
                             canGoBack = view.canGoBack()
                             canGoForward = view.canGoForward()
+                            if (latestSettings.translationEnabled) view.evaluateJavascript(translationScript, null)
                             view.evaluateJavascript(ARTICLE_SCRIPT) { raw ->
                                 article = decodeArticle(raw, url)
                             }
@@ -386,23 +462,28 @@ fun BrowserScreen(
                             view: WebView,
                             request: WebResourceRequest,
                         ): Boolean {
-                            val scheme = request.url.scheme.orEmpty().lowercase()
-                            if (scheme == "http" || scheme == "https") return false
-                            runCatching {
+                            val target = request.url.toString()
+                            if (WebNavigationPolicy.isSecureWebUrl(target)) return false
+                            if (request.url.scheme == "http" && request.isForMainFrame) {
+                                val secure = target.replaceFirst(Regex("^http:", RegexOption.IGNORE_CASE), "https:")
+                                if (WebNavigationPolicy.isSecureWebUrl(secure)) view.loadUrl(secure)
+                                return true
+                            }
+                            if (WebNavigationPolicy.mayOpenExternal(target, request.isForMainFrame, request.hasGesture())) runCatching {
                                 view.context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
                             }
                             return true
                         }
                     }
                     webView = this
-                    loadUrl(currentUrl)
+                    if (restoreState(savedWebState) == null) loadUrl(currentUrl)
                 }
             },
             update = { webView = it },
             onRelease = { web ->
+                web.saveState(savedWebState)
                 if (webView === web) webView = null
                 web.stopLoading()
-                web.loadUrl("about:blank")
                 web.clearHistory()
                 web.removeAllViews()
                 web.destroy()
@@ -653,7 +734,8 @@ private fun ArticleReader(
 
 private fun normalizeAddress(input: String): String {
     val value = input.trim()
-    if (value.startsWith("http://", true) || value.startsWith("https://", true)) return value
+    if (value.startsWith("http://", true)) return "https://" + value.substring(7)
+    if (WebNavigationPolicy.isSecureWebUrl(value)) return value
     if (!value.contains(' ') && value.contains('.')) return "https://$value"
     return "https://duckduckgo.com/?q=${Uri.encode(value)}"
 }
@@ -672,23 +754,35 @@ private fun decodeArticle(raw: String, url: String): WebArticle? = runCatching {
         author = json.optString("author"),
         language = json.optString("language"),
         text = json.optString("text"),
+        sourceText = json.optString("sourceText", json.optString("text")),
     ).takeIf { it.text.length >= 600 }
 }.getOrNull()
 
 private const val ARTICLE_SCRIPT = """
 (function(){
   try {
-    var selectors = ['article','main','[role="main"]','.article','.post','.entry-content','.article-body'];
+    var selectors = ['#content','#chaptercontent','#bookContent','.chapter-content','.reading-content','#readcontent'];
     var candidates = [];
     selectors.forEach(function(selector){
       document.querySelectorAll(selector).forEach(function(node){ candidates.push(node); });
     });
+    if (!candidates.length) ['article','main','[role="main"]','.article','.post','.entry-content','.article-body'].forEach(function(selector){document.querySelectorAll(selector).forEach(function(n){candidates.push(n);});});
     if (!candidates.length && document.body) candidates.push(document.body);
     var source = candidates.sort(function(a,b){
       return (b.innerText || '').length - (a.innerText || '').length;
     })[0];
     if (!source) return JSON.stringify({available:false});
     var clean = source.cloneNode(true);
+    var originalClean = source.cloneNode(true);
+    var originalWalker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT);
+    var clonedWalker = document.createTreeWalker(originalClean, NodeFilter.SHOW_TEXT);
+    var srcNode, dstNode;
+    while ((srcNode = originalWalker.nextNode()) && (dstNode = clonedWalker.nextNode())) {
+      dstNode.textContent = (window.shelfTranslator && window.shelfTranslator.originalText(srcNode)) || srcNode.orgn || srcNode.textContent;
+    }
+    originalClean.querySelectorAll('script,style,noscript,nav,header,footer,aside,form,button,svg,canvas,video,audio').forEach(function(n){n.remove();});
+    originalClean.querySelectorAll('p,div,br,li,h1,h2,h3').forEach(function(n){n.appendChild(document.createTextNode('\n'));});
+    var sourceText = (originalClean.textContent || '').replace(/[ \t]+/g,' ').replace(/\n\s*\n/g,'\n').trim();
     clean.querySelectorAll('script,style,noscript,nav,header,footer,aside,form,button,svg,canvas,video,audio').forEach(function(n){n.remove();});
     var text = (clean.innerText || clean.textContent || '').replace(/\s+/g,' ').trim();
     var paragraphs = clean.querySelectorAll('p').length;
@@ -701,7 +795,8 @@ private const val ARTICLE_SCRIPT = """
       title: document.title || '',
       author: author,
       language: document.documentElement.lang || '',
-      text: text.slice(0,700000)
+      text: text.slice(0,700000),
+      sourceText: sourceText.slice(0,700000)
     });
   } catch(e) {
     return JSON.stringify({available:false});

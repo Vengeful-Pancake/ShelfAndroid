@@ -329,6 +329,7 @@ sup,sub{line-height:0}
   }
 
   document.addEventListener('click', function(e){
+    if(e.target.closest && e.target.closest('.stv-ui,.stv-word')) return;
     var a = e.target.closest ? e.target.closest('a') : null;
     if (a){
       var chapter = a.getAttribute('data-chapter');
@@ -346,6 +347,7 @@ sup,sub{line-height:0}
   var startX = 0, startY = 0, startT = 0, moved = false;
 
   document.addEventListener('touchstart', function(e){
+    if(e.target.closest && e.target.closest('.stv-ui,.stv-word')) { moved = true; return; }
     if (e.touches.length !== 1) { moved = true; return; }
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
@@ -354,6 +356,7 @@ sup,sub{line-height:0}
   }, {passive:true});
 
   document.addEventListener('touchend', function(e){
+    if(e.target.closest && e.target.closest('.stv-ui,.stv-word')) return;
     if (moved) return;
     var t = e.changedTouches[0];
     var dx = t.clientX - startX;

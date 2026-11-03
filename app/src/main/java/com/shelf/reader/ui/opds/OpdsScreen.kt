@@ -92,7 +92,7 @@ class OpdsViewModel(app: Application) : AndroidViewModel(app) {
     fun load() {
         val address = _state.value.url.trim()
         if (!isWebUrl(address)) {
-            _state.value = _state.value.copy(error = "Enter a complete http:// or https:// catalog address")
+            _state.value = _state.value.copy(error = "Enter a complete https:// catalog address")
             return
         }
         viewModelScope.launch {
@@ -186,7 +186,7 @@ class OpdsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun open(address: String, accept: String? = null): HttpURLConnection {
-        require(isWebUrl(address)) { "Only http and https addresses are supported" }
+        require(isWebUrl(address)) { "Only HTTPS addresses are supported" }
         return (URL(address).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 30_000
@@ -203,7 +203,7 @@ class OpdsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun isWebUrl(value: String): Boolean = runCatching {
-        URI(value).let { (it.scheme == "http" || it.scheme == "https") && !it.host.isNullOrBlank() }
+        URI(value).let { it.scheme == "https" && !it.host.isNullOrBlank() && it.rawUserInfo == null }
     }.getOrDefault(false)
 
     private fun Element.textOf(localName: String): String =

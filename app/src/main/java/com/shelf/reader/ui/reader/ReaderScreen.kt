@@ -186,6 +186,9 @@ fun ReaderScreen(
 
     val pageColor = Color(android.graphics.Color.parseColor(state.settings.background))
     val textColor = Color(android.graphics.Color.parseColor(state.settings.foreground))
+    val localController = remember(bookId) { LocalReaderController(view.context, bookId, state.bookTitle) }
+    LaunchedEffect(state.bookTitle) { localController.updateTitle(state.bookTitle) }
+    DisposableEffect(localController) { onDispose { localController.close() } }
     val transformer = remember(state.settings.wordReplacements, state.settings.wordReplacementsUri) {
         WordTransformer(view.context, state.settings.wordReplacements, state.settings.wordReplacementsUri)
     }
@@ -324,8 +327,10 @@ fun ReaderScreen(
                         ),
                         "Shelf",
                     )
+                    localController.attach(this)
 
                     webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) { localController.install() }
                         override fun shouldInterceptRequest(
                             view: WebView,
                             request: WebResourceRequest,
@@ -362,7 +367,7 @@ fun ReaderScreen(
                             // External links open in the browser; internal ones already
                             // came through the JavaScript bridge.
                             val scheme = request.url.scheme
-                            if (scheme == "http" || scheme == "https") {
+                            if ((scheme == "http" || scheme == "https") && request.isForMainFrame && request.hasGesture()) {
                                 if (request.url.host == "shelf.localhost") return true
                                 runCatching {
                                     view.context.startActivity(
@@ -461,7 +466,7 @@ fun ReaderScreen(
                         else pendingQuote = quote
                     }
                 },
-                onSpeak = viewModel::toggleSpeaking,
+                onSpeak = { webView?.evaluateJavascript("if(window.stvToggleSpeech)window.stvToggleSpeech()", null) },
             )
         }
 

@@ -9,3 +9,6 @@
 -keepclassmembers class com.shelf.reader.ui.reader.ReaderBridge {
     public *;
 }
+-keepclassmembers class com.shelf.reader.ui.reader.LocalReaderController {
+    @android.webkit.JavascriptInterface <methods>;
+}

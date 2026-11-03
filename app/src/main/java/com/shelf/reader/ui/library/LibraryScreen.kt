@@ -745,6 +745,10 @@ private fun LibraryMenu(
             leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
             onClick = { open = false; onRescan() },
         )
+        DropdownMenuItem(
+            text = { Text("Kiểm tra cập nhật") },
+            onClick = { open = false; com.shelf.reader.update.UpdateRequests.check.tryEmit(Unit) },
+        )
     }
 
     DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {

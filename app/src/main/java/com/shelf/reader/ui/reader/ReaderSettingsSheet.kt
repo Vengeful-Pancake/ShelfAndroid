@@ -100,6 +100,12 @@ fun ReaderSettingsSheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Chinese → Vietnamese (QT)", Modifier.weight(1f), color = ShelfColors.Text)
+                Switch(checked = settings.translationEnabled, onCheckedChange = { enabled ->
+                    onChange { it.copy(translationEnabled = enabled) }
+                })
+            }
             SettingRow("Page") {
                 SwatchRow(
                     colors = ReaderSettings.PAGE_COLORS,

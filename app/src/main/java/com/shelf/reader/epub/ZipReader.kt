@@ -43,6 +43,9 @@ class ZipReader private constructor(
         private const val CEN_SIG = 0x02014b50
         private const val LOC_SIG = 0x04034b50
         private const val MAX_COMMENT = 0xFFFF
+        private const val MAX_ENTRY_BYTES = 32 * 1024 * 1024
+        private const val MAX_DIRECTORY_BYTES = 32 * 1024 * 1024
+        private const val MAX_ENTRIES = 100_000
 
         fun open(channel: FileChannel, onClose: Closeable? = null): ZipReader =
             ZipReader(channel, onClose).apply { readCentralDirectory() }
@@ -51,6 +54,8 @@ class ZipReader private constructor(
     // ------------------------------------------------------------------ read
 
     private fun readAt(position: Long, length: Int): ByteBuffer {
+        if (position < 0 || length < 0 || length > MAX_DIRECTORY_BYTES || position > channel.size() ||
+            length.toLong() > channel.size() - position) throw IOException("Invalid archive range")
         val buf = ByteBuffer.allocate(length).order(ByteOrder.LITTLE_ENDIAN)
         var read = 0
         while (read < length) {
@@ -98,7 +103,8 @@ class ZipReader private constructor(
             }
         }
 
-        if (cenOffset < 0 || cenOffset + cenSize > fileSize) {
+        if (entryCount !in 0..MAX_ENTRIES.toLong() || cenSize !in 0..MAX_DIRECTORY_BYTES.toLong() ||
+            cenOffset < 0 || cenOffset > fileSize || cenSize > fileSize - cenOffset) {
             throw IOException("Central directory is outside the file")
         }
 
@@ -113,6 +119,7 @@ class ZipReader private constructor(
             val nameLen = cen.getShort(p + 28).toInt() and 0xFFFF
             val extraLen = cen.getShort(p + 30).toInt() and 0xFFFF
             val commentLen = cen.getShort(p + 32).toInt() and 0xFFFF
+            if (p.toLong() + 46 + nameLen + extraLen + commentLen > cen.limit()) throw IOException("Truncated ZIP entry")
             var localOffset = cen.getInt(p + 42).toLong() and 0xFFFFFFFFL
 
             val nameBytes = ByteArray(nameLen)
@@ -170,6 +177,9 @@ class ZipReader private constructor(
     fun read(path: String): ByteArray {
         val name = resolve(path) ?: throw IOException("Missing entry: $path")
         val entry = entries.getValue(name)
+        if (entry.size !in 0..MAX_ENTRY_BYTES.toLong() || entry.compressedSize !in 0..MAX_ENTRY_BYTES.toLong()) {
+            throw IOException("Book section exceeds the 32 MiB safety limit")
+        }
 
         // The local header repeats the name/extra lengths, and they can differ from
         // the central directory, so the data offset has to be computed from it.
@@ -178,6 +188,10 @@ class ZipReader private constructor(
         val nameLen = local.getShort(26).toInt() and 0xFFFF
         val extraLen = local.getShort(28).toInt() and 0xFFFF
         val dataOffset = entry.localHeaderOffset + 30 + nameLen + extraLen
+        if (dataOffset < 0 || dataOffset > channel.size() || entry.compressedSize > channel.size() - dataOffset) {
+            throw IOException("Entry data is outside archive")
+        }
+        if (entry.method == 0 && entry.size != entry.compressedSize) throw IOException("Invalid stored entry size")
 
         return when (entry.method) {
             0 -> readAt(dataOffset, entry.size.toInt()).let { buf ->
@@ -229,6 +243,9 @@ class ZipReader private constructor(
                 }
                 val n = inflater.inflate(outBuf)
                 if (n > 0) {
+                    if (out.size().toLong() + n > expectedSize || out.size().toLong() + n > MAX_ENTRY_BYTES) {
+                        throw IOException("Expanded book section exceeds declared size")
+                    }
                     out.write(outBuf, 0, n)
                     stalls = 0
                 } else if (inflater.finished() || inflater.needsDictionary()) {
@@ -240,6 +257,7 @@ class ZipReader private constructor(
                     break
                 }
             }
+            if (!inflater.finished() || out.size().toLong() != expectedSize) throw IOException("Truncated book section")
             return out.toByteArray()
         } finally {
             inflater.end()

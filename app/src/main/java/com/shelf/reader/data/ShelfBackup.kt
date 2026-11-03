@@ -37,6 +37,7 @@ object ShelfBackup {
             .put("version", VERSION)
             .put("createdAt", System.currentTimeMillis())
             .put("settings", settingsToJson(settingsStore.current()))
+            .put("translationNames", com.shelf.reader.translation.NameStore.get(context).snapshot())
             .put("books", JSONArray(books.map(::bookToJson)))
             .put("progress", JSONArray(progress.map(::progressToJson)))
             .put("bookmarks", JSONArray(bookmarks.map(::bookmarkToJson)))
@@ -158,6 +159,7 @@ object ShelfBackup {
 
         dao.replacePortableData(progress, bookmarks, annotations, favorites, libraries, joins, sessions)
         root.optJSONObject("settings")?.let { settingsStore.replace(settingsFromJson(it)) }
+        root.optJSONObject("translationNames")?.let { com.shelf.reader.translation.NameStore.get(context).restore(it) }
 
         BackupSummary(idMap.size, progress.size, bookmarks.size, annotations.size)
     }
@@ -191,6 +193,8 @@ object ShelfBackup {
         .put("fullscreen", value.fullscreen).put("ttsSpeed", value.ttsSpeed)
         .put("ttsVoice", value.ttsVoice).put("titleMaxLines", value.titleMaxLines)
         .put("titleFontSize", value.titleFontSize).put("wordReplacements", value.wordReplacements)
+        .put("translationEnabled", value.translationEnabled)
+        .put("globalNames", value.globalNames).put("globalTerms", value.globalTerms)
         .put("wordReplacementsUri", value.wordReplacementsUri).put("twoColumns", value.twoColumns)
         .put("useFilenameAsTitle", value.useFilenameAsTitle).put("gridDensity", value.gridDensity)
         .put("sort", value.sort).put("filter", value.filter)
@@ -215,6 +219,9 @@ object ShelfBackup {
             titleMaxLines = json.optInt("titleMaxLines", defaults.titleMaxLines),
             titleFontSize = json.optInt("titleFontSize", defaults.titleFontSize),
             wordReplacements = json.optString("wordReplacements", defaults.wordReplacements),
+            translationEnabled = json.optBoolean("translationEnabled", defaults.translationEnabled),
+            globalNames = json.optString("globalNames", defaults.globalNames),
+            globalTerms = json.optString("globalTerms", defaults.globalTerms),
             wordReplacementsUri = json.optString("wordReplacementsUri")
                 .takeIf { it.isNotBlank() && it != "null" },
             twoColumns = json.optBoolean("twoColumns", defaults.twoColumns),

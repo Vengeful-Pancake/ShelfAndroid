@@ -10,6 +10,7 @@ import com.shelf.reader.ShelfApp
 import com.shelf.reader.data.AnnotationEntity
 import com.shelf.reader.data.BookmarkEntity
 import com.shelf.reader.data.ReaderSettings
+import com.shelf.reader.translation.ChineseTranslator
 import com.shelf.reader.epub.EpubBook
 import com.shelf.reader.epub.TocEntry
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import org.jsoup.Jsoup
 import java.util.Locale
 
@@ -143,7 +145,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     // -------------------------------------------------------------------- load
 
     fun load(id: String) {
-        if (bookId == id && book != null) return
+        if (bookId == id && book != null) {
+            // A tab switch recreates the WebView while retaining this view model.
+            // Rebuild from the visible chapter and its latest saved scroll fraction.
+            openChapter(_state.value.chapterIndex, currentFraction)
+            return
+        }
 
         val previousBookId = bookId
         if (previousBookId.isNotEmpty()) saveProgressNow()
@@ -238,7 +245,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private fun observeSettings() {
         viewModelScope.launch {
             repository.settings.flow.collect { settings ->
+                val previous = _state.value.settings
                 _state.value = _state.value.copy(settings = settings)
+                if (book != null && (previous.translationEnabled != settings.translationEnabled ||
+                    previous.globalNames != settings.globalNames || previous.globalTerms != settings.globalTerms)) {
+                    openChapter(_state.value.chapterIndex, currentFraction)
+                }
             }
         }
     }
@@ -266,12 +278,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val resolver: (String) -> String = { path -> ReaderHtml.resourceUrl(forBook, version, path) }
         return runCatching {
             val chapter = epub.chapter(start, resolver)
+            val translator = ChineseTranslator(getApplication(), _state.value.settings, forBook)
+            val translatedHtml = translator.interactiveHtml(chapter.html)
             SectionContent(
                 index = start,
                 next = nextSection(epub, start),
-                label = epub.tocLabelFor(start).ifBlank { chapter.title },
-                html = chapter.html,
-                text = Jsoup.parse(chapter.html).text(),
+                label = translator.plain(epub.tocLabelFor(start).ifBlank { chapter.title }),
+                html = translatedHtml,
+                text = Jsoup.parse(translatedHtml).text(),
             )
         }.getOrNull()
     }
@@ -305,8 +319,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         clearSections()
         chapterJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
-            val content = withContext(Dispatchers.IO) {
-                readSection(epub, start, requestedBookId, requestedVersion)
+            val (content, labels) = withContext(Dispatchers.IO) {
+                val translator = ChineseTranslator(getApplication(), _state.value.settings, requestedBookId)
+                readSection(epub, start, requestedBookId, requestedVersion) to
+                    (translator.plain(epub.meta.title) to epub.toc.map { it.copy(label = translator.plain(it.label)) })
             }
 
             if (bookId != requestedBookId || book !== epub) return@launch
@@ -330,6 +346,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 error = null,
                 chapterIndex = content.index,
                 chapterTitle = title,
+                bookTitle = labels.first,
+                toc = labels.second,
                 html = content.html,
                 pageIndex = content.index,
                 pageLabel = content.label,
@@ -423,11 +441,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         searchJob = viewModelScope.launch {
             _state.value = _state.value.copy(searchingBook = true, searchResults = emptyList())
             val results = withContext(Dispatchers.IO) {
+                val translator = ChineseTranslator(getApplication(), _state.value.settings, requestedBookId)
                 buildList {
                     for (index in 0 until epub.chapterCount) {
+                        ensureActive()
                         if (size >= 200) break
                         val chapter = runCatching { epub.chapter(index) { "" } }.getOrNull() ?: continue
-                        val text = Jsoup.parse(chapter.html).text().replace(Regex("\\s+"), " ")
+                        val text = Jsoup.parse(translator.html(chapter.html)).text().replace(Regex("\\s+"), " ")
                         val match = text.indexOf(needle, ignoreCase = true)
                         if (match < 0) continue
                         val from = (match - 70).coerceAtLeast(0)
@@ -440,7 +460,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         add(
                             ReaderSearchResult(
                                 chapter = index,
-                                chapterTitle = epub.tocLabelFor(index).ifBlank { chapter.title },
+                                chapterTitle = translator.plain(epub.tocLabelFor(index).ifBlank { chapter.title }),
                                 snippet = snippet,
                                 query = needle,
                             )
@@ -667,7 +687,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun speakNow(fromIndex: Int = 0) {
         val engine = tts ?: return
-        val language = book?.meta?.language.orEmpty()
+        val language = if (_state.value.settings.translationEnabled &&
+            book?.meta?.language.orEmpty().startsWith("zh")) "vi" else book?.meta?.language.orEmpty()
         val locale = runCatching {
             if (language.isNotBlank()) Locale.forLanguageTag(language) else Locale.getDefault()
         }.getOrDefault(Locale.getDefault())

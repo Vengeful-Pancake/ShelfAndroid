@@ -1,9 +1,49 @@
 # Shelf
 
+## Chinese reading integration
+
+The bottom bar switches between **Books**, **Internet**, and **Dictionary**.
+Chinese EPUB chapters and Internet pages translate to Vietnamese by default,
+using the bundled Smooth Xianxia / QuickTranslator dictionary from TangThu Studio.
+Translation runs on the device and does not need a translation server.
+
+The Internet tab opens Sáng Tác Việt. Its Android adaptation of the supplied
+extension translates visible text nodes and newly inserted page content. Use
+**Reader** for a clean article view and Vietnamese read-aloud. Browser history
+is saved when switching tabs.
+
+In 0.3.0, the reader uses the compact STV-style floating controls. Tap a translated
+Chinese phrase to see **zw** (original), **hv** (Hán Việt), **HV** (initials
+capitalized), **Tr** (Smooth Xianxia), and **tc** (custom wording). Expand the
+selection left/right to make a longer name. A tick immediately saves and applies
+the selected wording as `Chinese=Vietnamese`. Text that was supplied only in
+Vietnamese cannot be reverse-engineered into the original Chinese.
+
+The **Name** panel and **Dictionary** tab now have only **Global**, **Riêng truyện**,
+**Lưu lại**, and **Chạy**. Story rules override global rules. Rules and appearance
+are stored atomically in the private local `translation-names.json` file, and are
+included in manual reading-data backups. STV chapter links and its .app/.com
+mirrors share the same story key.
+
+The floating appearance panel controls background, text colour, shadow, font,
+text size, line spacing, alignment and original/translated display. **Nghe sách**
+opens the sentence list with play/pause/stop, sentence jump, speed and installed
+voice selection. The active sentence is highlighted and brought into view.
+Speech uses Android's TTS engine and requires an installed Vietnamese/Chinese
+voice; the translation dictionary itself stays offline.
+
+Turn off **Translate Chinese by default** to view original text; the same switch
+is available in the reader's settings. Existing continuous chapter scrolling,
+font/page controls, saved positions, bookmarks and notes remain available.
+Book search uses the displayed translation. Unknown characters remain visible.
+
+This is deterministic QT phrase translation, not an AI rewriting model. Data
+provenance is recorded in `app/src/main/assets/dictionaries/PROVENANCE.md`.
+
 <p align="center"><strong>A private, local-first EPUB reader for Android.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/Vengeful-Pancake/ShelfAndroid/releases/latest/download/Shelf-v0.1.apk"><strong>Download Shelf 0.1</strong></a>
+  <a href="https://github.com/thinh2000tiger-lang/ShelfAndroid/releases/latest"><strong>Download latest Shelf</strong></a>
   &nbsp;|&nbsp;
   Android 8.0 or newer
   &nbsp;|&nbsp;
@@ -342,25 +382,30 @@ The article reader can speak the extracted article, change speed from 0.75x to
 reader. The browser can access the internet; opening a local EPUB does not upload
 the book.
 
-## Automatic updates
+## Updates and security
 
-Shelf checks the latest stable release from this GitHub repository when the app
-starts. If a numerically newer version is available, a dialog shows its release
-notes and file size.
+Version 0.3.1 checks the configured public GitHub repository for stable releases
+on startup/resume and every six hours while the app is active. The library menu
+also has **Kiểm tra cập nhật**. Download starts after user confirmation. SHA-256
+is mandatory; the APK must have the same package and signing certificate, a
+larger versionCode, and the advertised versionName. Redirects stay on GitHub's
+HTTPS download hosts. Debug apps do not update themselves with release APKs.
 
-1. Tap **Download update** or **Later**.
-2. Shelf downloads only from GitHub's HTTPS release hosts.
-3. It checks that the file is an Android APK and verifies GitHub's SHA-256 digest
-   when the release supplies one.
-4. Android may ask once for permission to install apps from Shelf.
-5. After verification, Android's normal package installer opens for the final
-   confirmation.
+Installing a verified update requires Android's **Allow from this source**
+permission for Shelf and the system installer confirmation. The narrowly scoped
+update FileProvider exposes only cached updates. Installation is never silent;
+do not disable Play Protect. Old 0.3.0 and earlier builds must install 0.3.1 once
+manually before they can receive update prompts. Offline checks stay quiet.
 
-Shelf cannot install silently, and it does not replace the app without Android's
-confirmation. Offline checks remain quiet. Drafts, prereleases, malformed
-versions, missing APKs, and non-GitHub download redirects are ignored or
-rejected. Updates must be signed with the same key as 0.1, so Android can install
-them over the existing app without erasing your data.
+The signing key remains on the maintainer's machine and is never published.
+See `docs/RELEASING.md` for the reviewed-source and signed-release workflow.
+
+Internet connections require HTTPS; HTTP addresses entered in the browser are
+upgraded to HTTPS. Sites cannot launch arbitrary app intents. Only tapped
+telephone and email links can open their corresponding external apps.
+The translation bridge accepts only bounded text requests from the main HTTPS
+frame, with one request processed at a time. Book sections have a 32 MiB
+per-entry safety limit and malformed or oversized ZIP data is rejected.
 
 ## Privacy and storage behaviour
 
@@ -371,7 +416,7 @@ them over the existing app without erasing your data.
 - **Protected EPUB reader:** publisher scripts, remote frames, event handlers,
   and publisher CSS are removed. Book resources are loaded only from the open
   EPUB. External web links open only after you tap them.
-- **Optional network features:** GitHub update checks, OPDS catalogues, and the
+- **Optional network features:** OPDS catalogues and the
   web browser use the network. Ordinary local reading does not require it.
 - **Deletion is explicit:** only **Delete from device** removes a source EPUB,
   and Shelf shows a confirmation first.

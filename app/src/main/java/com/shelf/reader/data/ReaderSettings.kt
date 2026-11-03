@@ -45,6 +45,9 @@ data class ReaderSettings(
     val titleMaxLines: Int = 2,
     val titleFontSize: Int = 14,
     val wordReplacements: String = "",
+    val translationEnabled: Boolean = true,
+    val globalNames: String = "",
+    val globalTerms: String = "",
     val wordReplacementsUri: String? = null,
     val twoColumns: Boolean = false,
     val useFilenameAsTitle: Boolean = false,
@@ -104,6 +107,9 @@ class SettingsStore(private val context: Context) {
         val TITLE_LINES = intPreferencesKey("title_max_lines")
         val TITLE_SIZE = intPreferencesKey("title_font_size")
         val REPLACEMENTS = stringPreferencesKey("word_replacements")
+        val TRANSLATE = booleanPreferencesKey("translate_chinese")
+        val NAMES = stringPreferencesKey("global_names")
+        val TERMS = stringPreferencesKey("global_terms")
         val REPLACEMENTS_URI = stringPreferencesKey("word_replacements_uri")
         val TWO_COLUMNS = booleanPreferencesKey("two_columns")
         val USE_FILENAME = booleanPreferencesKey("use_filename_as_title")
@@ -138,6 +144,9 @@ class SettingsStore(private val context: Context) {
         titleMaxLines = this[Keys.TITLE_LINES] ?: 2,
         titleFontSize = this[Keys.TITLE_SIZE] ?: 14,
         wordReplacements = this[Keys.REPLACEMENTS] ?: "",
+        translationEnabled = this[Keys.TRANSLATE] ?: true,
+        globalNames = this[Keys.NAMES] ?: "",
+        globalTerms = this[Keys.TERMS] ?: "",
         wordReplacementsUri = this[Keys.REPLACEMENTS_URI]?.takeIf { it.isNotBlank() },
         twoColumns = this[Keys.TWO_COLUMNS] ?: false,
         useFilenameAsTitle = this[Keys.USE_FILENAME] ?: false,
@@ -168,6 +177,9 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.TITLE_LINES] = next.titleMaxLines
             prefs[Keys.TITLE_SIZE] = next.titleFontSize
             prefs[Keys.REPLACEMENTS] = next.wordReplacements
+            prefs[Keys.TRANSLATE] = next.translationEnabled
+            prefs[Keys.NAMES] = next.globalNames
+            prefs[Keys.TERMS] = next.globalTerms
             if (next.wordReplacementsUri == null) prefs.remove(Keys.REPLACEMENTS_URI)
             else prefs[Keys.REPLACEMENTS_URI] = next.wordReplacementsUri
             prefs[Keys.TWO_COLUMNS] = next.twoColumns

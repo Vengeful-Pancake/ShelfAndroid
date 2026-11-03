@@ -21,10 +21,12 @@ android {
         applicationId = "com.shelf.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
-
-        buildConfigField("String", "GITHUB_REPOSITORY", "\"Vengeful-Pancake/ShelfAndroid\"")
+        versionCode = 6
+        versionName = "0.3.1"
+        val updateRepository = providers.gradleProperty("updateRepository").orElse("thinh2000tiger-lang/ShelfAndroid").get()
+        require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
+        buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         vectorDrawables { useSupportLibrary = true }
     }
@@ -111,4 +113,10 @@ dependencies {
     implementation(libs.jsoup)
 
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
