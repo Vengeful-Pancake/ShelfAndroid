@@ -199,6 +199,8 @@ object ShelfBackup {
         .put("useFilenameAsTitle", value.useFilenameAsTitle).put("gridDensity", value.gridDensity)
         .put("sort", value.sort).put("filter", value.filter)
         .put("continuousScroll", value.continuousScroll).put("hideThumbnails", value.hideThumbnails)
+        .put("browserExtensionsEnabled", value.browserExtensionsEnabled)
+        .put("navigationBarVisible", value.navigationBarVisible).put("navigationBarScale", value.navigationBarScale)
 
     private fun settingsFromJson(json: JSONObject): ReaderSettings {
         val defaults = ReaderSettings()
@@ -231,6 +233,9 @@ object ShelfBackup {
             hideThumbnails = json.optBoolean("hideThumbnails", defaults.hideThumbnails),
             sort = json.optString("sort", defaults.sort),
             filter = json.optString("filter", defaults.filter),
+            browserExtensionsEnabled = json.optBoolean("browserExtensionsEnabled", defaults.browserExtensionsEnabled),
+            navigationBarVisible = json.optBoolean("navigationBarVisible", defaults.navigationBarVisible),
+            navigationBarScale = json.optDouble("navigationBarScale", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(.65f, 1.4f) ?: 1f,
         )
     }
 

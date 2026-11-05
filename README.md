@@ -12,6 +12,19 @@ extension translates visible text nodes and newly inserted page content. Use
 **Reader** for a clean article view and Vietnamese read-aloud. Browser history
 is saved when switching tabs.
 
+The Internet toolbar includes **Tabs**, **Extensions**, and a favorite star.
+The menu opens searchable **History** and **Favorites**, and **Navigation bar**
+settings. Open/close/switch browser tabs, or long-press a link to open a new tab.
+Up to 20 tab URLs, titles and reading positions are kept locally across restarts;
+history keeps the latest 1,000 visits. Recent tabs keep their live pages, while
+older tabs may reload with their saved navigation stack and scroll position.
+Clear history or remove individual entries without removing favorites.
+
+**Extensions → Smooth Xianxia / QT** turns web translation on/off and restores
+the original page text when off. This setting is independent of Reader mode.
+The bottom bar's gear opens size (65–140%) and show/hide settings. When hidden,
+use the small bottom arrow to bring it back. These preferences are remembered.
+
 Tap a word to highlight it and open the compact translation popup: **Dịch global**,
 **Dịch riêng**, **Cụm gốc** (review only), and **Hoa đầu** (capitalize the first
 letter of the final translation). Expand left/right to include adjacent words.

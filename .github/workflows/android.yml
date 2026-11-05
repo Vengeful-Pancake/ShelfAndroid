@@ -20,6 +20,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
+      - run: node --test app/src/test/js/stv-reader.test.cjs
       - run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain
       - uses: actions/upload-artifact@v4
         with:

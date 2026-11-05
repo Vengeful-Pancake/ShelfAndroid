@@ -58,6 +58,9 @@ data class ReaderSettings(
     val gridDensity: String = "adaptive",
     val sort: String = "recent",
     val filter: String = "all",
+    val browserExtensionsEnabled: Boolean = true,
+    val navigationBarVisible: Boolean = true,
+    val navigationBarScale: Float = 1f,
 ) {
     val align: String get() = if (justify) "justify" else "left"
 
@@ -119,6 +122,9 @@ class SettingsStore(private val context: Context) {
         val COLUMNS = intPreferencesKey("grid_columns") // Keep for migration
         val SORT = stringPreferencesKey("sort")
         val FILTER = stringPreferencesKey("filter")
+        val WEB_EXTENSIONS = booleanPreferencesKey("browser_extensions_enabled")
+        val NAV_VISIBLE = booleanPreferencesKey("navigation_bar_visible")
+        val NAV_SCALE = floatPreferencesKey("navigation_bar_scale")
     }
 
     val flow: Flow<ReaderSettings> = context.settingsStore.data.map { it.toSettings() }
@@ -155,6 +161,9 @@ class SettingsStore(private val context: Context) {
         gridDensity = this[Keys.DENSITY] ?: migrateColumns(this[Keys.COLUMNS]),
         sort = this[Keys.SORT] ?: "recent",
         filter = this[Keys.FILTER] ?: "all",
+        browserExtensionsEnabled = this[Keys.WEB_EXTENSIONS] ?: true,
+        navigationBarVisible = this[Keys.NAV_VISIBLE] ?: true,
+        navigationBarScale = (this[Keys.NAV_SCALE] ?: 1f).coerceIn(.65f, 1.4f),
     )
 
     suspend fun update(transform: (ReaderSettings) -> ReaderSettings) {
@@ -189,6 +198,9 @@ class SettingsStore(private val context: Context) {
             prefs[Keys.DENSITY] = next.gridDensity
             prefs[Keys.SORT] = next.sort
             prefs[Keys.FILTER] = next.filter
+            prefs[Keys.WEB_EXTENSIONS] = next.browserExtensionsEnabled
+            prefs[Keys.NAV_VISIBLE] = next.navigationBarVisible
+            prefs[Keys.NAV_SCALE] = next.navigationBarScale.coerceIn(.65f, 1.4f)
         }
     }
 

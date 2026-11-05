@@ -41,7 +41,7 @@
         }
         batch.nodes.forEach((node, i) => {
             if (!node.isConnected || node.textContent !== batch.texts[i] || typeof reply.texts[i] !== 'string') return;
-            if (!originals.has(node)) originals.set(node, batch.texts[i]);
+            originals.set(node, batch.texts[i]);
             rendered.set(node, reply.texts[i]);
             node.textContent = reply.texts[i];
         });
@@ -52,7 +52,7 @@
     });
     observer.observe(document.body, {subtree: true, childList: true, characterData: true});
     window.shelfTranslator = {
-        originalText: function(node) { return originals.get(node) || node.orgn || node.textContent; },
+        originalText: function(node) { return (rendered.get(node) === node.textContent && originals.get(node)) || node.orgn || node.textContent; },
         dispose: function () {
             stopped = true; clearTimeout(timer); observer.disconnect();
             originals.forEach((text, node) => {

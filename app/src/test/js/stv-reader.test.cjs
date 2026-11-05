@@ -31,6 +31,7 @@ function harness() {
         mutate() {observer();},
         reply(texts) {bridge.onmessage({data: JSON.stringify({id: requests.at(-1).id, texts})});},
         dispose() {context.window.shelfTranslator.dispose();},
+        original(node) {return context.window.shelfTranslator.originalText(node);},
     };
 }
 
@@ -66,4 +67,18 @@ test('batches large chapter lists', () => {
     h.run(); assert.equal(h.requests[0].texts.length, 32);
     h.reply(Array(32).fill('xin chào')); h.flush();
     assert.equal(h.requests[1].texts.length, 8);
+});
+
+test('turning the extension off restores the latest source when a website reuses a text node', () => {
+    const h = harness(); const node = h.add('你好'); h.run(); h.reply(['xin chào']); h.flush();
+    node.textContent = '世界'; h.mutate(); h.flush(); h.reply(['thế giới']); h.flush();
+    assert.equal(h.original(node), '世界');
+    h.dispose(); assert.equal(node.textContent, '世界');
+});
+
+test('reader extraction uses current website text instead of stale source after a website edit', () => {
+    const h = harness(); const node = h.add('你好'); h.run(); h.reply(['xin chào']); h.flush();
+    node.textContent = 'Updated chapter in Vietnamese';
+    assert.equal(h.original(node), 'Updated chapter in Vietnamese');
+    h.dispose(); assert.equal(node.textContent, 'Updated chapter in Vietnamese');
 });
