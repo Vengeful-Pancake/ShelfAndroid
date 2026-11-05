@@ -489,7 +489,7 @@ fun ReaderScreen(
                 onBookmarks = { sheet = ReaderSheet.BOOKMARKS },
                 onSearch = { sheet = ReaderSheet.SEARCH },
                 onNotes = { sheet = ReaderSheet.NOTES },
-                onSettings = { sheet = ReaderSheet.SETTINGS },
+                onSettings = { webView?.evaluateJavascript("if(window.stvToggleTools)window.stvToggleTools()", null) },
                 onProgressChange = { fraction ->
                     webView?.evaluateJavascript("window.shelfScrollTo($fraction)", null)
                     viewModel.onScroll(fraction)

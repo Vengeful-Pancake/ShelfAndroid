@@ -2,21 +2,25 @@ package com.shelf.reader.translation
 
 import android.content.Context
 import android.util.AtomicFile
-import com.shelf.reader.data.ReaderSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
 
-/** One atomic, private JSON document. Rules remain literal Chinese=Vietnamese lines. */
+/** One atomic, private JSON document shared by the reader and Dictionary tab. */
 class NameStore private constructor(context: Context) {
     private val file = AtomicFile(File(context.filesDir, "translation-names.json"))
     private var root = if (file.baseFile.exists()) JSONObject(file.openRead().bufferedReader().use { it.readText() }) else JSONObject()
     private val changes = MutableStateFlow(0L)
     val revision = changes.asStateFlow()
-    @Synchronized fun global(fallback: String = "") = root.optString("global", fallback)
-    @Synchronized fun story(key: String) = root.optJSONObject("stories")?.optString(key).orEmpty()
+    @Synchronized fun global(fallback: String = "") = TranslationRule.canonical(root.optString("global", fallback))
+    @Synchronized fun story(key: String) = TranslationRule.canonical(root.optJSONObject("stories")?.optString(key).orEmpty())
+    @Synchronized fun rules(key: String, global: Boolean, fallback: String = ""): List<TranslationRule> {
+        val text = if (global) global(fallback) else story(key)
+        val capitalized = root.optJSONObject("capitalized")?.optJSONObject(if (global) "global" else "story:$key")
+        return TranslationRule.parseAll(text).map { it.copy(capitalize = capitalized?.optString(it.source) == it.target) }
+    }
     @Synchronized fun activeKey() = root.optString("activeStory")
     @Synchronized fun activeTitle() = root.optString("activeTitle", "Truyện đang đọc")
     @Synchronized fun activate(key: String, title: String) {
@@ -26,21 +30,40 @@ class NameStore private constructor(context: Context) {
     @Synchronized fun save(key: String, global: Boolean, rules: String) {
         require(rules.length <= 1_000_000) { "Bảng Name quá lớn" }
         rules.lineSequence().filter { it.isNotBlank() && !it.trim().startsWith('#') }.forEach {
-            require(PhraseDictionary.parse(sequenceOf(it)).isNotEmpty()) { "Cú pháp: chữ Trung=bản dịch" }
+            require(TranslationRule.parse(it) != null) { "Cú pháp: \$[cụm từ]=bản dịch" }
         }
-        val next = JSONObject(root.toString()).put("version", 1)
-        if (global) next.put("global", rules) else {
+        val next = JSONObject(root.toString()).put("version", 2)
+        val canonical = TranslationRule.canonical(rules)
+        if (global) next.put("global", canonical) else {
             require(key.isNotBlank()) { "Hãy mở truyện trước" }
-            next.put("stories", (next.optJSONObject("stories") ?: JSONObject()).put(key, rules))
+            next.put("stories", (next.optJSONObject("stories") ?: JSONObject()).put(key, canonical))
         }
         commit(next)
     }
-    @Synchronized fun add(key: String, global: Boolean, source: String, target: String, fallback: String) {
+    @Synchronized fun add(key: String, global: Boolean, source: String, target: String, fallback: String, capitalize: Boolean = false) {
         require(source.isNotBlank() && target.isNotBlank() && source.length <= 200 && target.length <= 1000)
-        require(!source.contains('\n') && !source.contains('=') && !target.contains('\n'))
-        val mapping = PhraseDictionary.parse((if (global) global(fallback) else story(key)).lineSequence()).toMutableMap()
-        mapping[source] = target
-        save(key, global, mapping.entries.joinToString("\n") { "${it.key}=${it.value}" })
+        require(!source.contains('\n') && !source.contains("]=") && !target.contains('\n'))
+        val lines = (if (global) global(fallback) else story(key)).lines().toMutableList()
+        val existing = lines.indexOfFirst { TranslationRule.parse(it)?.source == source }
+        val rule = TranslationRule(source, target).line()
+        if (existing >= 0) {
+            lines[existing] = rule
+            for (i in lines.lastIndex downTo existing + 1) if (TranslationRule.parse(lines[i])?.source == source) lines.removeAt(i)
+        } else lines.add(rule)
+        // Store the capitalization intent separately so it runs after all translation rules.
+        val next = JSONObject(root.toString()).put("version", 2)
+        val table = lines.filter { it.isNotBlank() }.joinToString("\n")
+        require(table.length <= 1_000_000) { "Bảng Name quá lớn" }
+        if (global) next.put("global", table) else {
+            require(key.isNotBlank()) { "Hãy mở truyện trước" }
+            next.put("stories", (next.optJSONObject("stories") ?: JSONObject()).put(key, table))
+        }
+        val caps = next.optJSONObject("capitalized") ?: JSONObject()
+        val capScope = if (global) "global" else "story:$key"
+        val entries = caps.optJSONObject(capScope) ?: JSONObject()
+        if (capitalize) entries.put(source, target) else entries.remove(source)
+        next.put("capitalized", caps.put(capScope, entries))
+        commit(next)
     }
     @Synchronized fun appearance(): JSONObject = JSONObject(root.optJSONObject("appearance")?.toString() ?: "{}")
     @Synchronized fun snapshot(): JSONObject = JSONObject(root.toString())
@@ -49,7 +72,7 @@ class NameStore private constructor(context: Context) {
         fun validate(text: String) {
             require(text.length <= 1_000_000)
             text.lineSequence().filter { it.isNotBlank() && !it.trim().startsWith('#') }.forEach {
-                require(PhraseDictionary.parse(sequenceOf(it)).isNotEmpty())
+                require(TranslationRule.parse(it) != null)
             }
         }
         validate(value.optString("global"))

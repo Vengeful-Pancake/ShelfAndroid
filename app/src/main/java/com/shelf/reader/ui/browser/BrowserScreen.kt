@@ -276,6 +276,7 @@ fun BrowserScreen(
     val translationSettings by remember { ShelfApp.repository(context).settings.flow }
         .collectAsStateWithLifecycle(initialValue = ReaderSettings())
     val latestSettings by rememberUpdatedState(translationSettings)
+    val nameRevision by remember { com.shelf.reader.translation.NameStore.get(context).revision }.collectAsStateWithLifecycle()
     val translationScript = remember { context.assets.open("stv-reader.js").bufferedReader().use { it.readText() } }
 
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -294,9 +295,9 @@ fun BrowserScreen(
     val savedWebState = rememberSaveable { android.os.Bundle() }
     val translationBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
-    LaunchedEffect(webView, translationSettings.translationEnabled, translationSettings.globalNames, translationSettings.globalTerms) {
+    LaunchedEffect(webView, translationSettings.translationEnabled, translationSettings.globalNames, translationSettings.globalTerms, nameRevision) {
         webView?.evaluateJavascript(
-            if (translationSettings.translationEnabled) translationScript
+            if (translationSettings.translationEnabled) "if(window.shelfTranslator)window.shelfTranslator.dispose();$translationScript"
             else "if(window.shelfTranslator)window.shelfTranslator.dispose();", null)
         article = null
     }

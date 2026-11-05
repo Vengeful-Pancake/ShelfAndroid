@@ -5,6 +5,8 @@ import android.webkit.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.FormatSize
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -27,6 +29,7 @@ fun InteractiveWebReader(article: WebArticle, onBack: () -> Unit) {
     val story = remember(article.url) { NameStore.storyKey(article.url) }
     val readerSettings by remember { ShelfApp.repository(context).settings.flow }.collectAsStateWithLifecycle(initialValue = ReaderSettings())
     val controller = remember(story) { LocalReaderController(context, story, article.title) }
+    var web by remember { mutableStateOf<WebView?>(null) }
     DisposableEffect(controller) { onDispose { controller.close() } }
     val html by produceState<String?>(null, article.url, article.sourceText) {
         value = withContext(Dispatchers.IO) {
@@ -38,10 +41,18 @@ fun InteractiveWebReader(article: WebArticle, onBack: () -> Unit) {
     }
     Scaffold(topBar = { TopAppBar(title = { Text(article.title, maxLines = 1) }, navigationIcon = {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Return to web page") }
+    }, actions = {
+        IconButton(onClick = { web?.evaluateJavascript("if(window.stvToggleSpeech)window.stvToggleSpeech()", null) }) {
+            Icon(Icons.Outlined.RecordVoiceOver, "Nghe sách")
+        }
+        IconButton(onClick = { web?.evaluateJavascript("if(window.stvToggleTools)window.stvToggleTools()", null) }) {
+            Icon(Icons.Outlined.FormatSize, "Giao diện đọc")
+        }
     }) }) { padding ->
         if (html == null) CircularProgressIndicator(Modifier.padding(padding)) else AndroidView(
             modifier = Modifier.padding(padding).fillMaxSize(),
             factory = { ctx -> WebView(ctx).apply {
+                web = this
                 settings.javaScriptEnabled = true
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
@@ -56,7 +67,7 @@ fun InteractiveWebReader(article: WebArticle, onBack: () -> Unit) {
                     override fun onPageFinished(view: WebView, url: String) { controller.install() }
                 }
                 loadDataWithBaseURL("https://shelf-reader.localhost/", html!!, "text/html", "UTF-8", null)
-            } }, onRelease = { controller.close(); it.removeJavascriptInterface("LocalReader"); it.destroy() },
+            } }, onRelease = { web = null; controller.close(); it.removeJavascriptInterface("LocalReader"); it.destroy() },
         )
     }
 }

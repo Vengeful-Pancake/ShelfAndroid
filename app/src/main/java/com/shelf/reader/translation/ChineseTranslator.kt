@@ -8,48 +8,30 @@ import org.jsoup.nodes.TextNode
 /** Offline Smooth Xianxia / QuickTranslator shared by EPUBs and the browser. Call off the UI thread. */
 class ChineseTranslator(context: Context, private val settings: ReaderSettings, private val storyKey: String = "") {
     private val app = context.applicationContext
-    private val custom = PhraseDictionary(PhraseDictionary.parse(
-        (settings.globalTerms + "\n" + NameStore.get(app).global(settings.globalNames) + "\n" + NameStore.get(app).story(storyKey)).lineSequence()))
+    private val names = NameStore.get(app)
+    private val global = TranslationRule.parseAll(settings.globalTerms) + names.rules(storyKey, true, settings.globalNames)
+    private val story = names.rules(storyKey, false)
+    private val engine by lazy { OrderedTranslation(bundled(app), global, story) }
 
     fun annotated(text: String, original: Boolean = false): String {
-        if (!containsChinese(text)) return escape(text)
-        val base = bundled(app)
-        val hv = phonetic(app)
         val out = StringBuilder()
-        var index = 0
-        var previousTranslated = false
-        while (index < text.length) {
-            val match = if (containsChinese(text[index].toString())) custom.match(text, index) ?: base.match(text, index) else null
-            if (match != null || containsChinese(text[index].toString())) {
-                val size = match?.first ?: 1
-                val source = text.substring(index, index + size)
-                val rendered = match?.second ?: source
-                if (!original && out.isNotEmpty() && previousTranslated) out.append(' ')
-                val smooth = base.translate(source, cjkOnly = true)
-                out.append("<span class=\"stv-word\" data-src=\"").append(escape(source))
-                    .append("\" data-hv=\"").append(escape(hv.translate(source, cjkOnly = true)))
-                    .append("\" data-smooth=\"").append(escape(smooth)).append("\">")
-                    .append(escape(if (original) source else rendered)).append("</span>")
-                previousTranslated = true
-                index += size
-            } else {
-                val char = text[index++]
-                out.append(escape(if (original) char.toString() else when (char) {
-                    '，' -> ", "; '。' -> ". "; '！' -> "! "; '？' -> "? "; '：' -> ": "; '；' -> "; "; else -> char.toString()
-                }))
-                previousTranslated = false
-            }
+        for (token in engine.tokens(text, original)) {
+            if (!token.selectable) { out.append(escape(token.text)); continue }
+            out.append("<span class=\"stv-word\" data-src=\"").append(escape(text.substring(token.start, token.end)))
+                .append("\" data-start=\"").append(token.start).append("\" data-end=\"").append(token.end)
+                .append("\">").append(escape(token.text)).append("</span>")
         }
         return out.toString()
     }
 
     fun description(text: String): org.json.JSONObject = org.json.JSONObject().put("source", text)
         .put("hv", phonetic(app).translate(text, cjkOnly = true)).put("smooth", bundled(app).translate(text, cjkOnly = true))
+        .put("global", OrderedTranslation(bundled(app), global).translate(text)).put("story", engine.translate(text))
 
     fun interactiveHtml(html: String): String {
         val doc = Jsoup.parseBodyFragment(html)
         val nodes = ArrayList<TextNode>()
-        doc.body().traverse { node, _ -> if (node is TextNode && containsChinese(node.wholeText) &&
+        doc.body().traverse { node, _ -> if (node is TextNode && node.wholeText.any { it.isLetterOrDigit() } &&
             node.parent()?.nodeName() !in listOf("script", "style")) nodes.add(node) }
         nodes.forEach { node ->
             val source = node.wholeText
@@ -61,12 +43,12 @@ class ChineseTranslator(context: Context, private val settings: ReaderSettings, 
     }
 
     fun plain(text: String): String {
-        if (!settings.translationEnabled || !containsChinese(text)) return text
-        return bundled(app).translate(text, custom, cjkOnly = true)
+        if (!settings.translationEnabled) return text
+        return engine.translate(text)
     }
 
     fun html(html: String): String {
-        if (!settings.translationEnabled || !containsChinese(html)) return html
+        if (!settings.translationEnabled) return html
         val doc = Jsoup.parseBodyFragment(html)
         doc.body().traverse { node, _ ->
             if (node is TextNode && node.parent()?.nodeName() !in listOf("script", "style")) {

@@ -74,6 +74,9 @@ class LocalReaderController(context: Context, private val story: String, private
     @JavascriptInterface fun saveName(scopeName: String, source: String, target: String): String = result {
         require(scopeName in listOf("global", "story")); names.add(story, scopeName == "global", source, target, preferences.globalNames)
     }
+    @JavascriptInterface fun saveCapitalName(scopeName: String, source: String, target: String): String = result {
+        require(scopeName in listOf("global", "story")); names.add(story, scopeName == "global", source, target, preferences.globalNames, capitalize = true)
+    }
     @JavascriptInterface fun saveAppearance(json: String): String = result {
         require(json.length <= 4096); names.saveAppearance(JSONObject(json))
     }

@@ -27,14 +27,17 @@ fun DictionaryScreen() {
     var storyDraft by rememberSaveable { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
     var loaded by remember { mutableStateOf(false) }
+    var savedGlobal by rememberSaveable { mutableStateOf("") }
+    var savedStory by rememberSaveable { mutableStateOf("") }
+    var savedStoryKey by rememberSaveable { mutableStateOf("") }
     val story = store.activeKey()
-    LaunchedEffect(revision) {
-        if (!loaded) {
-            val settings = ShelfApp.repository(context).settings.current()
-            globalDraft = store.global(settings.globalNames)
-            storyDraft = store.story(story)
-            loaded = true
-        }
+    LaunchedEffect(revision, story) {
+        val settings = ShelfApp.repository(context).settings.current()
+        val latestGlobal = store.global(settings.globalNames)
+        val latestStory = store.story(story)
+        if (!loaded || globalDraft == savedGlobal) globalDraft = latestGlobal
+        if (!loaded || savedStoryKey != story || storyDraft == savedStory) storyDraft = latestStory
+        savedGlobal = latestGlobal; savedStory = latestStory; savedStoryKey = story; loaded = true
     }
     fun save() { scope.launch {
         runCatching { withContext(Dispatchers.IO) { store.save(story, global, if (global) globalDraft else storyDraft) } }
@@ -60,8 +63,8 @@ fun DictionaryScreen() {
             onValueChange = { if (global) globalDraft = it else storyDraft = it; status = "Chưa lưu" },
             modifier = Modifier.fillMaxWidth().weight(1f),
             textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, color = Color.LightGray),
-            placeholder = { Text("张三=Trương Tam", color = Color.Gray) },
+            placeholder = { Text("\$[张三]=Trương Tam", color = Color.Gray) },
         )
-        Text(status.ifBlank { "Cú pháp: chữ Trung=bản dịch · Name riêng ưu tiên hơn global" }, color = Color.LightGray, modifier = Modifier.padding(8.dp))
+        Text(status.ifBlank { "\$[cụm từ]=bản dịch · Chạy theo thứ tự dòng · Riêng ưu tiên hơn global" }, color = Color.LightGray, modifier = Modifier.padding(8.dp))
     }
 }

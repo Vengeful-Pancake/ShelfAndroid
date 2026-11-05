@@ -12,12 +12,18 @@ extension translates visible text nodes and newly inserted page content. Use
 **Reader** for a clean article view and Vietnamese read-aloud. Browser history
 is saved when switching tabs.
 
-In 0.3.0, the reader uses the compact STV-style floating controls. Tap a translated
-Chinese phrase to see **zw** (original), **hv** (Hán Việt), **HV** (initials
-capitalized), **Tr** (Smooth Xianxia), and **tc** (custom wording). Expand the
-selection left/right to make a longer name. A tick immediately saves and applies
-the selected wording as `Chinese=Vietnamese`. Text that was supplied only in
-Vietnamese cannot be reverse-engineered into the original Chinese.
+Tap a word to highlight it and open the compact translation popup: **Dịch global**,
+**Dịch riêng**, **Cụm gốc** (review only), and **Hoa đầu** (capitalize the first
+letter of the final translation). Expand left/right to include adjacent words.
+A tick immediately saves and applies the edit to the Dictionary tab; X discards
+unsaved edits. This also works with text supplied in Vietnamese.
+
+Rules use literal `$[word(s)]=translation` lines. Within each stage, rules run once
+in line order, and later rules see earlier results. Chinese source rules run
+first, Smooth translates the remaining/new Chinese, then Vietnamese rules run
+on the result. Any Chinese introduced by those rules is translated before the
+next rule. Capitalization runs last. Story definitions override the same global
+source. Legacy `Chinese=Vietnamese` lines are read and displayed in the new format.
 
 The **Name** panel and **Dictionary** tab now have only **Global**, **Riêng truyện**,
 **Lưu lại**, and **Chạy**. Story rules override global rules. Rules and appearance
@@ -25,7 +31,8 @@ are stored atomically in the private local `translation-names.json` file, and ar
 included in manual reading-data backups. STV chapter links and its .app/.com
 mirrors share the same story key.
 
-The floating appearance panel controls background, text colour, shadow, font,
+The appearance panel is hidden while reading. Open it with the typography button
+on the reader toolbar and close it with X. It controls background, text colour, shadow, font,
 text size, line spacing, alignment and original/translated display. **Nghe sách**
 opens the sentence list with play/pause/stop, sentence jump, speed and installed
 voice selection. The active sentence is highlighted and brought into view.
@@ -67,7 +74,7 @@ choose to export them.
 
 ## Download and install
 
-1. Download [`Shelf-v0.1.apk`](https://github.com/Vengeful-Pancake/ShelfAndroid/releases/latest/download/Shelf-v0.1.apk).
+1. Download the APK from the [latest release](https://github.com/Vengeful-Pancake/ShelfAndroid/releases/latest).
 2. Open the downloaded APK on your Android device.
 3. If Android asks, allow your browser or file manager to **Install unknown
    apps**, then return to the installer.
