@@ -10,7 +10,6 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
-import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 class UpdateFlowTest {
@@ -21,7 +20,7 @@ class UpdateFlowTest {
     @After fun cleanup() { compose.runOnUiThread { models.forEach { it.dismiss() } }; prefs.edit().clear().commit(); UpdateRequests.info.value = false }
     private fun model(client: UpdateClient, now: () -> Long): UpdateViewModel {
         lateinit var result: UpdateViewModel
-        compose.runOnUiThread { result = UpdateViewModel(compose.activity.application, client, UpdateIdentity("0.3.5", 10, false), prefs, now) }
+        compose.runOnUiThread { result = UpdateViewModel(compose.activity.application, client, UpdateIdentity(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toLong(), false), prefs, now) }
         models.add(result); return result
     }
     private class Client : UpdateClient {
@@ -29,10 +28,8 @@ class UpdateFlowTest {
         @Volatile var error: Exception? = null
         override fun latest(): UpdateRelease {
             calls.incrementAndGet(); error?.let { throw it }
-            return UpdateRelease("0.3.6", "fixture", "https://github.com/Vengeful-Pancake/ShelfAndroid/releases/download/v0.3.6/Shelf-0.3.6.apk", 1000, "a".repeat(64), 11, "Manifest fixture")
+            return UpdateRelease("0.3.7", "fixture", "https://github.com/Vengeful-Pancake/ShelfAndroid/releases/download/v0.3.7/Shelf-0.3.7.apk", 1000, "a".repeat(64), 12, "Manifest fixture")
         }
-        override suspend fun download(release: UpdateRelease, progress: (Float) -> Unit): File = error("not requested")
-        override fun verifyPackage(file: File, version: String, expectedCode: Long) = error("not requested")
     }
     @Test fun latestBuildAndRestartBothDetectNewReleaseDespiteInheritedRecentCheck() {
         val now = 1_000_000L
@@ -40,7 +37,7 @@ class UpdateFlowTest {
         val client = Client(); val first = model(client) { now }
         compose.runOnUiThread { first.check() }
         compose.waitUntil(10_000) { first.state.value is UpdateUi.Available }
-        assertEquals("0.3.6", first.status.value.latestVersion)
+        assertEquals("0.3.7", first.status.value.latestVersion)
         compose.runOnUiThread { first.dismiss() }
         val restarted = model(client) { now + 1000 }
         compose.runOnUiThread { restarted.check() }
@@ -65,9 +62,21 @@ class UpdateFlowTest {
         prefs.edit().putLong("last_attempt", now).commit()
         val client = Client(); val vm = model(client) { now }
         compose.runOnUiThread { compose.activity.setContent { com.shelf.reader.ui.theme.ShelfTheme { AppUpdateCoordinator(vm) } } }
-        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Shelf 0.3.6 đã có bản mới").assertExists(); true }.getOrDefault(false) }
+        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Shelf 0.3.7 đã có bản mới").assertExists(); true }.getOrDefault(false) }
         assertEquals(1, client.calls.get())
-        compose.onNodeWithText("Tải và cập nhật").assertIsDisplayed()
+        compose.onNodeWithText("Tải qua trình duyệt").assertIsDisplayed()
+    }
+    @Test fun updateOpensReviewedReleasePageOnlyAfterUserAction() {
+        val url = java.util.concurrent.atomic.AtomicReference("")
+        val vm = model(Client()) { 1_000_000L }
+        compose.runOnUiThread { compose.activity.setContent { com.shelf.reader.ui.theme.ShelfTheme {
+            AppUpdateCoordinator(vm, openRelease = { url.set(it) })
+        } } }
+        compose.waitUntil(10_000) { vm.state.value is UpdateUi.Available }
+        assertEquals("", url.get())
+        compose.onNodeWithText("Tải qua trình duyệt").performClick()
+        assertEquals("https://github.com/${BuildConfig.UPDATE_REPOSITORY}/releases/tag/v0.3.7", url.get())
+        assertTrue(vm.state.value is UpdateUi.Idle)
     }
     @Test fun installedVersionAndRegisteredManualCheckAreVisibleFromLibraryAndBrowser() {
         compose.onNodeWithText("Shelf ${BuildConfig.VERSION_NAME} · debug").performClick()

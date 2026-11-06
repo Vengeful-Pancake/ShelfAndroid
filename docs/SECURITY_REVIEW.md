@@ -1,5 +1,39 @@
 # Local security review — 29 October 2026
 
+## Least privilege and EPUB hardening 0.3.6 — 6 November 2026
+
+The user reported a Play Protect harmful-app block for 0.3.5. Its specific
+classification cause is unknown. The exact public 0.3.5 APK was scanned on
+VirusTotal (no vendor detections shown) and submitted for Google's review with
+user authorization; this is not Play Protect clearance. See
+[the artifact-specific report](PLAY_PROTECT_0.3.5_REVIEW.md).
+
+0.3.6 reduces actual capability: removes REQUEST_INSTALL_PACKAGES, the APK
+downloader, native package-install flow and update FileProvider. Automatic and
+manual release discovery remain. An explicit user action opens a constructed
+HTTPS release-page URL in the system browser. Android handles the downloaded
+APK and enforces installed signature compatibility. Release publication retains
+certificate/identity checks, SHA-256, source ZIP and old-client update.json.
+This permission reduction is not evidence the old permission caused the block.
+
+The previous EPUB sanitizer was a tag/attribute denylist. A presentation allowlist
+now strips forms, executable URI schemes, SVG animation, remote images, all
+publisher classes/data-* attributes and event handlers. Book IDs are namespaced
+and fragment navigation compares ID strings instead of interpolating selectors.
+Plain text, formatting, tables, archive images and cross-chapter links remain.
+Calibre's SVG-wrapped raster images are retained as img; other inline vector
+markup is omitted. Only image resources are served to the reader; their
+responses add sandbox CSP. Generated reader documents add a fresh script nonce
+and block frames, form submissions, objects and network connections. Trusted
+reader JavaScript remains necessary for translation editing and TTS controls.
+
+The package com.shelf.reader and pinned signing certificate are unchanged.
+No detection-evasion changes, silent installs or device-protection changes are
+made. Neither these changes nor local tests establish a Google verdict.
+
+References: [Google's warning guidance](https://developers.google.com/android/play-protect/warning-dev-guidance),
+[Android native bridge risks](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges).
+
 ## Update availability audit 0.3.5 — 6 November 2026
 
 An anonymous request to the configured release API reproduced HTTP 403 with

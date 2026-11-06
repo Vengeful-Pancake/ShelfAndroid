@@ -7,6 +7,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import android.webkit.WebSettings
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -257,6 +258,8 @@ fun ReaderScreen(
                         domStorageEnabled = false
                         allowFileAccess = false
                         allowContentAccess = false
+                        mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        safeBrowsingEnabled = true
                         blockNetworkLoads = false
                         loadsImagesAutomatically = true
                         defaultTextEncodingName = "utf-8"
@@ -337,6 +340,7 @@ fun ReaderScreen(
                         ): WebResourceResponse? {
                             // Nothing leaves the device: anything that is not a file
                             // from inside this book is answered with an empty response.
+                            if (request.isForMainFrame) return blank()
                             val requested = ReaderHtml.resourceRequest(request.url) ?: return blank()
                             val resource = viewModel.resourceFor(
                                 requested.bookId,
@@ -345,6 +349,7 @@ fun ReaderScreen(
                             )
                                 ?: return blank()
                             val (bytes, mime) = resource
+                            if (!mime.startsWith("image/")) return blank()
                             return WebResourceResponse(
                                 mime.substringBefore(';'),
                                 null,
@@ -355,6 +360,7 @@ fun ReaderScreen(
                                     // so cached bytes cannot leak into another/updated book.
                                     "Cache-Control" to "private, max-age=86400",
                                     "X-Content-Type-Options" to "nosniff",
+                                    "Content-Security-Policy" to "sandbox; default-src 'none'; style-src 'unsafe-inline'",
                                 ),
                                 ByteArrayInputStream(bytes),
                             )

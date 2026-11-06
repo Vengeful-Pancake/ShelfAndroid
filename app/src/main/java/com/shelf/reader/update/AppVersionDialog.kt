@@ -38,8 +38,8 @@ internal fun AppVersionDialog(status: UpdateStatus, checking: Boolean, onDismiss
             if (status.source.isNotBlank()) Text(status.source)
             if (checking) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Đang kiểm tra…") }
             if (status.error.isNotBlank()) Text("Lỗi gần nhất: ${status.error}", color = MaterialTheme.colorScheme.error)
-            Text("Quyền cài cập nhật: ${if (context.packageManager.canRequestPackageInstalls()) "đã cho phép" else "sẽ hỏi khi cài APK"}")
-            Text("Tự kiểm tra khi mở app và mỗi 15 phút khi đang dùng. APK phải đúng mã ứng dụng, SHA-256, phiên bản và chứng chỉ ký.", style = MaterialTheme.typography.bodySmall)
+            Text("Shelf không có quyền cài ứng dụng. Tải APK qua trình duyệt và xác nhận cài bằng Android.")
+            Text("Tự kiểm tra khi mở app và mỗi 15 phút khi đang dùng. Trang release có APK, source và SHA-256. Giữ Play Protect bật; cài đè bằng APK cùng chữ ký để giữ dữ liệu.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${BuildConfig.UPDATE_REPOSITORY}/releases/latest"))) } }) { Text("Mở trang release") }
         }
     }, confirmButton = { TextButton(onClick = onCheck, enabled = !checking) { Text("Kiểm tra cập nhật") } },

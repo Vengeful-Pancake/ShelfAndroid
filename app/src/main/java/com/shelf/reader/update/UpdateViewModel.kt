@@ -66,20 +66,6 @@ class UpdateViewModel internal constructor(app: Application, private val client:
             }
         }
     }
-    fun download(release: UpdateRelease) {
-        if (work?.isActive == true) return
-        val token = ++generation
-        mutable.value = UpdateUi.Downloading(release, 0f)
-        work = viewModelScope.launch(Dispatchers.Main.immediate) {
-            try {
-                val file = withContext(Dispatchers.IO) { client.download(release) { value ->
-                    viewModelScope.launch(Dispatchers.Main.immediate) { if (token == generation) mutable.value = UpdateUi.Downloading(release, value) }
-                } }
-                if (token == generation) mutable.value = UpdateUi.Ready(release, file)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (token == generation) mutable.value = UpdateUi.Message(error.message ?: "Không tải được cập nhật") }
-        }
-    }
     fun dismiss() { generation++; work?.cancel(); statusMutable.value = statusMutable.value.copy(checking = false); mutable.value = UpdateUi.Idle }
     fun error(text: String) { mutable.value = UpdateUi.Message(text) }
 }

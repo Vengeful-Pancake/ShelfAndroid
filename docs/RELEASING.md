@@ -49,26 +49,30 @@ Checks run at cold startup and on returning to the foreground, then every 15
 minutes while active. Failed checks retry after one minute or server backoff.
 Each new process checks immediately instead of inheriting the previous build's
 six-hour timestamp. Manual requests are queued until the root coordinator can
-handle them and show progress/results. The user chooses
-whether to download; only the verified cached APK can be offered to Android's
-installer. Package identity, versionName, increasing versionCode and the exact
-current signing certificate are checked. Certificate rotation requires a
-deliberate future migration; it is not accepted implicitly.
+handle them and show progress/results. Since 0.3.6 the user chooses to open the
+exact version's GitHub release page in the system browser, download the APK and
+confirm installation in Android. Shelf does not download APKs or request install
+privileges. The publisher verifies package identity, versionName, versionCode,
+non-debuggable flag and the pinned release certificate. Android enforces installed
+package/signing compatibility. Keep the same signing key for in-place upgrades.
 
 The primary manifest uses the documented GitHub latest-release asset URL, so
 normal checks do not consume the REST API's anonymous per-IP quota. Only a 404
 manifest falls back to the API. Rate-limit headers are honored for API retries;
 no account token is placed in the APK. All metadata redirects must stay HTTPS
-on GitHub/CDN hosts. Malformed metadata fails closed. A manifest does not grant
-install trust: the downloaded APK must still match the installed signing cert,
-package, advertised version, increasing build number, size and SHA-256.
+on GitHub/CDN hosts. Malformed metadata fails closed. The browser handoff constructs
+the release-page URL from the configured repository and validated stable version;
+it never launches an arbitrary URL provided by remote metadata. APK SHA-256 and
+source ZIP remain public release assets, including update.json for older clients.
 
 Version/update details show the installed channel, last attempt/success, latest
 known version, source and error. Debug builds explicitly identify themselves and
 do not self-install a production package. Updater timestamps and API cooldowns
 are excluded from Android backup/transfer; reading preferences remain separate.
 
-REQUEST_INSTALL_PACKAGES is now intentionally declared for this user-requested
-feature. Permission is requested only at the install step. No accessibility,
-device-admin, SMS, contacts or broad file permissions are involved. Play Protect
-classification cannot be guaranteed by a successful build or signature check.
+0.3.6 removes REQUEST_INSTALL_PACKAGES, the cached-APK download/installation path
+and the update FileProvider. Automatic update discovery and manual checks remain.
+No accessibility, device-admin, SMS, contacts or broad file permissions are involved.
+Play Protect classification cannot be guaranteed by a successful build, signature
+check or emulator install. Do not change package/key or disable device protection
+to work around a classification; continue the official review when necessary.

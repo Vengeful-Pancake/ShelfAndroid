@@ -65,10 +65,11 @@ object ReaderHtml {
         topInsetPx: Int,
         bottomInsetPx: Int,
     ): String {
+        val nonce = ReaderContentSecurity.nonce()
         val dark = settings.isDarkPage
         val rule = if (dark) "rgba(230,227,221,.28)" else "rgba(30,30,30,.22)"
         val head = buildString {
-            append(HEAD_OPEN)
+            append(HEAD_OPEN.replace("<style>", ReaderContentSecurity.meta(nonce) + "<style>"))
             append(":root{")
             append("--bg:").append(settings.background).append(';')
             append("--fg:").append(settings.foreground).append(';')
@@ -93,8 +94,8 @@ object ReaderHtml {
             append("<main id=\"pane\">")
             append(sectionHtml)
             append("</main>")
-            append("<script>window.shelfContinuous=").append(settings.continuousScroll).append(";</script>")
-            append(SCRIPT)
+            append("<script nonce=\"").append(nonce).append("\">window.shelfContinuous=").append(settings.continuousScroll).append(";</script>")
+            append(SCRIPT.replace("<script>", "<script nonce=\"$nonce\">"))
             append("</body></html>")
         }
     }
@@ -319,7 +320,7 @@ sup,sub{line-height:0}
     var target = null;
     if (fragment){
       var scope = part || sec;
-      if (scope) target = scope.querySelector('[id="' + fragment + '"],[name="' + fragment + '"]');
+      if (scope) target = Array.from(scope.querySelectorAll('[id]')).find(function(el){ return el.id === 'epub-' + fragment; });
     }
     if (!target) target = part || sec;
     if (!target) return false;
@@ -384,8 +385,7 @@ sup,sub{line-height:0}
   };
 
   window.shelfScrollToId = function(id){
-    var el = document.getElementById(id);
-    if (!el) el = document.querySelector('[name="' + id + '"]');
+    var el = document.getElementById('epub-' + id);
     if (el) { el.scrollIntoView(true); lastY = window.scrollY; return true; }
     return false;
   };

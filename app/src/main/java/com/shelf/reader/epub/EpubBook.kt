@@ -34,8 +34,6 @@ class EpubBook(private val zip: ZipReader) : Closeable {
                 "bookinfo|metadata|aboutthisbook)(page)?\\d*$"
         )
 
-        private val STRIP_TAGS = listOf("script", "link", "meta", "base", "iframe", "object", "embed", "style")
-
         private val MIME_BY_EXTENSION = mapOf(
             "html" to "text/html", "xhtml" to "application/xhtml+xml", "htm" to "text/html",
             "css" to "text/css", "js" to "text/javascript", "json" to "application/json",
@@ -503,57 +501,11 @@ class EpubBook(private val zip: ZipReader) : Closeable {
     fun chapter(index: Int, resourceUrl: (String) -> String): Chapter {
         if (index !in spine.indices) throw EpubException("Chapter $index is out of range")
         val path = spine[index]
-        val base = EpubPaths.dirName(path)
         val soup: Document = Jsoup.parse(zip.readText(path), "")
 
         val docTitle = soup.selectFirst("title")?.text()?.trim().orEmpty()
 
-        // Drop anything executable or style-bearing — reader settings always win.
-        soup.select(STRIP_TAGS.joinToString(",")).remove()
-        soup.select("[style]").forEach { el ->
-            // Keep alignment-ish inline styles out; publisher CSS is dropped on purpose.
-            el.removeAttr("style")
-        }
-        soup.allElements.forEach { el ->
-            el.attributes().map { it.key }
-                .filter { it.startsWith("on", ignoreCase = true) }
-                .forEach { el.removeAttr(it) }
-        }
-
-        for (img in soup.select("img, image")) {
-            for (attr in listOf("src", "xlink:href", "href")) {
-                val value = img.attr(attr)
-                if (value.isNotEmpty() && !hasScheme(value)) {
-                    img.attr(attr, resourceUrl(EpubPaths.resolve(base, value)))
-                }
-            }
-            img.removeAttr("width")
-            img.removeAttr("height")
-            img.attr("loading", "lazy")
-        }
-
-        for (a in soup.select("a")) {
-            val href = a.attr("href")
-            if (href.isEmpty()) continue
-            val scheme = schemeOf(href)
-            if (scheme == "http" || scheme == "https" || scheme == "mailto") {
-                a.attr("target", "_blank")
-                a.attr("rel", "noopener noreferrer")
-                continue
-            }
-            val target = href.substringBefore('#')
-            val fragment = if (href.contains('#')) href.substringAfter('#') else ""
-            val resolved = if (target.isNotEmpty()) EpubPaths.resolve(base, target) else path
-            val idx = spineIndexOf(resolved)
-            a.attr("href", "#")
-            if (idx >= 0) {
-                a.attr("data-chapter", idx.toString())
-                if (fragment.isNotEmpty()) a.attr("data-fragment", fragment)
-            }
-        }
-
-        val body = soup.body()
-        val html = body?.html() ?: soup.html()
+        val html = EpubContent.sanitize(soup, path, resourceUrl, ::spineIndexOf)
 
         synchronized(spineTitles) {
             if (spineTitles[index].isEmpty()) {

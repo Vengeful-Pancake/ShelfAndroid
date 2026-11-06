@@ -36,7 +36,7 @@ fun InteractiveWebReader(article: WebArticle, onBack: () -> Unit) {
             val translator = ChineseTranslator(context, readerSettings, story)
             val body = article.sourceText.lineSequence().filter { it.isNotBlank() }.joinToString("") { "<p>${ChineseTranslator.escape(it)}</p>" }
             val content = translator.interactiveHtml("<h1>${ChineseTranslator.escape(article.title)}</h1>$body")
-            "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head><body class='stv-local'><main id='stv-content'>$content</main></body></html>"
+            "<!doctype html><html><head><meta charset='utf-8'>${ReaderContentSecurity.meta(ReaderContentSecurity.nonce())}<meta name='viewport' content='width=device-width, initial-scale=1'></head><body class='stv-local'><main id='stv-content'>$content</main></body></html>"
         }
     }
     Scaffold(topBar = { TopAppBar(title = { Text(article.title, maxLines = 1) }, navigationIcon = {

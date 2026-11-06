@@ -415,17 +415,26 @@ The updater reads the public `releases/latest/download/update.json` asset first,
 avoiding the shared anonymous REST API quota. Older releases without a manifest
 can use the API fallback. Failed checks are recorded rather than treated as
 "up to date", and an older build's check timestamp does not suppress a new build.
-Download starts after user confirmation. SHA-256
-is mandatory; the APK must have the same package and signing certificate, a
-larger versionCode, and the advertised versionName. Redirects stay on GitHub's
-HTTPS download hosts. Debug apps do not update themselves with release APKs.
+Metadata redirects stay on GitHub's HTTPS download hosts. Debug apps do not
+offer production updates.
 
-Installing a verified update requires Android's **Allow from this source**
-permission for Shelf and the system installer confirmation. The narrowly scoped
-update FileProvider exposes only cached updates. Installation is never silent;
-do not disable Play Protect. If an older updater cannot find this release, install
-0.3.5 once over it without uninstalling. Offline errors remain visible in the
-version/update details rather than interrupting reading with a dialog.
+Starting in **0.3.6**, Shelf only discovers and announces updates. After you tap
+**Tải qua trình duyệt**, the system browser opens the version's GitHub release
+page containing the APK, source and SHA-256. Download the APK there and confirm
+installation in Android. Shelf has no install-packages permission, APK downloader
+or update FileProvider. Android enforces matching package/signing identity and
+version ordering. The publisher still verifies the release certificate, build
+identity and non-debuggable flag before publishing. Keep Play Protect enabled.
+If an older updater cannot find this release, install 0.3.6 over it without
+uninstalling. Offline errors remain visible in version/update details.
+
+EPUB content is restricted to reading markup and archive-local images. Book
+scripts, forms, frames, event handlers and publisher UI attributes are removed;
+book anchors are namespaced. Generated reader pages also use a per-document
+script nonce and a restrictive Content Security Policy. Inline SVG cover images
+are converted to ordinary images; other inline vector markup is omitted while
+its text is preserved. These changes reduce attack surface; they do not establish
+the cause of the reported 0.3.5 Play Protect block or guarantee Google clearance.
 
 The signing key remains on the maintainer's machine and is never published.
 See `docs/RELEASING.md` for the reviewed-source and signed-release workflow.

@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatePolicyTest {
+    @Test fun browserHandoffCanOnlyUseAStableVersionOnTheConfiguredRepository() {
+        assertEquals("https://github.com/reader-owner/ShelfAndroid/releases/tag/v0.3.6", UpdatePolicy.releasePageUrl("reader-owner/ShelfAndroid", "0.3.6"))
+        assertThrows(IllegalArgumentException::class.java) { UpdatePolicy.releasePageUrl("reader-owner/ShelfAndroid", "../evil") }
+        assertThrows(IllegalArgumentException::class.java) { UpdatePolicy.releasePageUrl("evil.test/path/../ShelfAndroid", "0.3.6") }
+    }
     @Test fun releaseMustBeStableAndDigestMustBeComplete() {
         assertEquals("0.3.1", UpdatePolicy.stableVersion("v0.3.1"))
         assertNull(UpdatePolicy.stableVersion("v0.3.2-beta"))
