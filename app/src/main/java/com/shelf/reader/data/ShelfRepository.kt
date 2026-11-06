@@ -215,7 +215,7 @@ class ShelfRepository(
      * Takes lasting permission on a folder the person picked and adds it to the library.
      * Returns an error message, or null when the folder was added.
      */
-    suspend fun addRoot(treeUri: Uri): String? = withContext(Dispatchers.IO) {
+    suspend fun addRoot(treeUri: Uri, includeSubfolders: Boolean = true): String? = withContext(Dispatchers.IO) {
         val readFlag = Intent.FLAG_GRANT_READ_URI_PERMISSION
         val readWriteFlags = readFlag or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val persisted = runCatching {
@@ -235,7 +235,8 @@ class ShelfRepository(
             ?: runCatching { DocumentsContract.getTreeDocumentId(treeUri).substringAfterLast('/') }.getOrNull()
             ?: "Folder"
 
-        dao.addRoot(RootEntity(treeUri = key, name = name))
+        scanner.cancelAndJoin()
+        dao.addRoot(RootEntity(treeUri = key, name = name, includeSubfolders = includeSubfolders))
         scanner.start()
         null
     }
@@ -255,7 +256,14 @@ class ShelfRepository(
     }
 
     suspend fun setRootEnabled(treeUri: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+        scanner.cancelAndJoin()
         dao.setRootEnabled(treeUri, enabled)
+        scanner.start()
+    }
+
+    suspend fun setRootSubfolders(treeUri: String, included: Boolean) = withContext(Dispatchers.IO) {
+        scanner.cancelAndJoin()
+        dao.setRootSubfolders(treeUri, included)
         scanner.start()
     }
 

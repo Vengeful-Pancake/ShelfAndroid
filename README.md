@@ -1,5 +1,25 @@
 # Shelf
 
+## Browse folders and scan options
+
+In **Books**, tap the folder icon (**Browse folders**) or select **Menu → Browse
+folders**. Open a source, then its book-containing subfolders. Breadcrumbs and
+the back arrow move up the tree. Books directly inside the current folder appear
+below its subfolders. Search inside a folder also searches its descendants;
+**All Books** remains the flat view of every included book.
+
+Open **Scan options** to change **Include subfolders** for each source. The same
+switch above **Add a folder** controls new sources (on by default). Turn it off
+to scan only EPUBs directly in that source. Previously indexed descendant books
+are hidden, with their progress and saved data retained for when it is enabled
+again. Disable a whole source with its separate enable switch.
+
+Older libraries get their folder paths indexed on first opening Browse folders;
+**Refresh folder list** retries indexing. Same-named subfolders in different
+branches remain separate. Disconnected/unreadable sources retain cached books
+instead of treating a failed listing as deletion. Storage access still uses
+Android's folder picker and requires no broad storage permission.
+
 ## Chinese reading integration
 
 The bottom bar switches between **Books**, **Internet**, and **Dictionary**.

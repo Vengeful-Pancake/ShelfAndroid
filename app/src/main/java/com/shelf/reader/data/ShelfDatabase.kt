@@ -36,6 +36,9 @@ interface ShelfDao {
     @Query("UPDATE roots SET enabled = :enabled WHERE treeUri = :treeUri")
     suspend fun setRootEnabled(treeUri: String, enabled: Boolean)
 
+    @Query("UPDATE roots SET includeSubfolders = :included WHERE treeUri = :treeUri")
+    suspend fun setRootSubfolders(treeUri: String, included: Boolean)
+
     @Transaction
     suspend fun removeRoot(treeUri: String) {
         deleteBooksForRoot(treeUri)
@@ -48,7 +51,7 @@ interface ShelfDao {
         """
         SELECT b.id, b.docUri, b.treeUri, b.title, b.author, b.series,
                b.language, b.publisher, b.description, b.source, b.filename, b.folder,
-               b.chapters, b.size, b.added, b.broken, b.coverFile,
+               b.chapters, b.size, b.added, b.broken, b.coverFile, b.folderPath,
                p.chapter AS chapter, p.scrollOffset AS scrollOffset, p.at AS lastRead,
                p.title AS lastChapter,
                CASE WHEN f.bookId IS NULL THEN 0 ELSE 1 END AS favorite
@@ -304,7 +307,7 @@ interface ShelfDao {
         CustomLibraryEntity::class,
         LibraryBookJoinEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class ShelfDatabase : RoomDatabase() {
@@ -312,6 +315,13 @@ abstract class ShelfDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: ShelfDatabase? = null
+
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN folderPath TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE roots ADD COLUMN includeSubfolders INTEGER NOT NULL DEFAULT 1")
+            }
+        }
 
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -350,7 +360,7 @@ abstract class ShelfDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShelfDatabase::class.java,
                 "shelf.db",
-            ).addMigrations(MIGRATION_2_3).build().also { instance = it }
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
     }
 }

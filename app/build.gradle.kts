@@ -21,8 +21,8 @@ android {
         applicationId = "com.shelf.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.3.6"
+        versionCode = 12
+        versionName = "0.3.7"
         val updateRepository = providers.gradleProperty("updateRepository").orElse("Vengeful-Pancake/ShelfAndroid").get()
         require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
@@ -73,6 +73,8 @@ android {
         compose = true
         buildConfig = true
     }
+
+    sourceSets.getByName("androidTest").assets.srcDir("schemas")
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }

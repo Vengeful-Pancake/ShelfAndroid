@@ -12,6 +12,7 @@ data class RootEntity(
     val name: String,
     val enabled: Boolean = true,
     val addedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "1") val includeSubfolders: Boolean = true,
 )
 
 @Entity(
@@ -38,6 +39,8 @@ data class BookEntity(
     val coverFile: String? = null,
     val broken: Boolean = false,
     val error: String? = null,
+    /** JSON array of folder names relative to the selected root; null until the next scan of a legacy row. */
+    @ColumnInfo(defaultValue = "NULL") val folderPath: String? = null,
 )
 
 @Entity(tableName = "progress")
@@ -127,6 +130,7 @@ data class BookCard(
     val lastRead: Long?,
     val lastChapter: String?,
     val favorite: Boolean,
+    val folderPath: String? = null,
 ) {
     /** Whole-book completion, 0..100, matching the desktop app's calculation. */
     val percent: Int

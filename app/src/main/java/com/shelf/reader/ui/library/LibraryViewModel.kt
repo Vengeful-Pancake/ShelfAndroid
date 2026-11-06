@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.shelf.reader.ShelfApp
 import com.shelf.reader.data.BookCard
+import com.shelf.reader.data.BookFolders
 import com.shelf.reader.data.CustomLibraryEntity
 import com.shelf.reader.data.FolderWritePermissionRequest
 import com.shelf.reader.data.ReaderSettings
@@ -32,14 +33,16 @@ import java.time.ZoneId
 
 sealed interface LibraryCategory {
     object All : LibraryCategory
-    data class Folder(val uri: String, val name: String) : LibraryCategory
+    object Folders : LibraryCategory
+    data class Folder(val uri: String, val name: String, val path: List<String> = emptyList()) : LibraryCategory
     data class Custom(val id: Long, val name: String) : LibraryCategory
     data class Series(val name: String) : LibraryCategory
     object Duplicates : LibraryCategory
 
     val label: String get() = when (this) {
         is All -> "All Books"
-        is Folder -> name
+        is Folders -> "Browse folders"
+        is Folder -> path.lastOrNull() ?: name
         is Custom -> name
         is Series -> name
         is Duplicates -> "Duplicates"
@@ -105,6 +108,8 @@ data class LibraryUiState(
     val settings: ReaderSettings = ReaderSettings(),
     val query: String = "",
     val loading: Boolean = true,
+    val folders: List<LibraryFolderEntry> = emptyList(),
+    val unindexedFolders: Boolean = false,
 ) {
     val filter: LibraryFilter get() = LibraryFilter.from(settings.filter)
     val sort: LibrarySort get() = LibrarySort.from(settings.sort)
@@ -164,7 +169,12 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         },
     ) { sources, controls -> sources to controls }
         .flatMapLatest { (sources, controls) ->
-            val cards = sources.cards
+            val enabledRoots = sources.roots.filter { it.enabled }.associateBy { it.treeUri }
+            val cards = sources.cards.filter { card ->
+                val root = enabledRoots[card.treeUri]
+                root != null && (root.includeSubfolders || BookFolders.decode(card.folderPath)?.isEmpty() == true ||
+                    (card.folderPath == null && card.folder == root.name))
+            }
             val activeCategory = controls.category
 
             val duplicateIds = duplicateIds(cards)
@@ -181,6 +191,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 settings = sources.settings,
                 query = controls.query,
                 loading = false,
+                folders = LibraryFolderIndex.children(sources.roots, cards, activeCategory).filter {
+                    activeCategory != LibraryCategory.Folders || controls.query.isBlank() || it.name.contains(controls.query.trim(), true)
+                },
+                unindexedFolders = cards.any { it.folderPath == null },
             )
 
             if (activeCategory is LibraryCategory.Custom) {
@@ -193,7 +207,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 val filteredCards = when (activeCategory) {
                     LibraryCategory.All -> cards
-                    is LibraryCategory.Folder -> cards.filter { it.treeUri == activeCategory.uri }
+                    LibraryCategory.Folders -> emptyList()
+                    is LibraryCategory.Folder -> cards.filter {
+                        it.treeUri == activeCategory.uri && LibraryFolderIndex.includes(
+                            BookFolders.decode(it.folderPath), activeCategory.path, controls.query.isNotBlank())
+                    }
                     is LibraryCategory.Series -> cards.filter { it.series.equals(activeCategory.name, true) }
                     LibraryCategory.Duplicates -> cards.filter { it.id in duplicateIds }
                     else -> cards
@@ -300,7 +318,18 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setQuery(value: String) { _query.value = value }
 
-    fun setCategory(category: LibraryCategory) { _category.value = category }
+    fun setCategory(category: LibraryCategory) {
+        _category.value = category
+        _query.value = ""
+        if ((category is LibraryCategory.Folder || category == LibraryCategory.Folders) && state.value.unindexedFolders) {
+            repository.rescan(false)
+        }
+    }
+
+    fun parentFolder() {
+        val current = _category.value as? LibraryCategory.Folder ?: return
+        setCategory(if (current.path.isEmpty()) LibraryCategory.Folders else current.copy(path = current.path.dropLast(1)))
+    }
 
     fun setFilter(filter: LibraryFilter) = viewModelScope.launch {
         repository.settings.update { it.copy(filter = filter.key) }

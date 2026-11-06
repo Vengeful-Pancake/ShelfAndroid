@@ -43,6 +43,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,8 +79,8 @@ class FoldersViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    fun addFolder(uri: Uri) = viewModelScope.launch {
-        _message.value = repository.addRoot(uri) ?: "Folder added — scanning now"
+    fun addFolder(uri: Uri, includeSubfolders: Boolean) = viewModelScope.launch {
+        _message.value = repository.addRoot(uri, includeSubfolders) ?: "Folder added — scanning now"
     }
 
     fun remove(treeUri: String) = viewModelScope.launch { repository.removeRoot(treeUri) }
@@ -87,6 +90,10 @@ class FoldersViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun rescan(force: Boolean) = repository.rescan(force)
+
+    fun setSubfolders(treeUri: String, included: Boolean) = viewModelScope.launch {
+        repository.setRootSubfolders(treeUri, included)
+    }
 
     fun consumeMessage() { _message.value = null }
 }
@@ -102,10 +109,11 @@ fun FoldersScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val snackbars = remember { SnackbarHostState() }
     var confirmRemove by remember { mutableStateOf<RootEntity?>(null) }
+    var includeSubfolders by rememberSaveable { mutableStateOf(true) }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
-    ) { uri -> if (uri != null) viewModel.addFolder(uri) }
+    ) { uri -> if (uri != null) viewModel.addFolder(uri, includeSubfolders) }
 
     LaunchedEffect(message) {
         message?.let {
@@ -140,6 +148,14 @@ fun FoldersScreen(
         Column(Modifier.padding(padding).fillMaxSize()) {
 
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Include subfolders", color = ShelfColors.Text)
+                        Text("Quét cả thư mục con khi thêm thư mục", style = MaterialTheme.typography.bodySmall, color = ShelfColors.Muted)
+                    }
+                    Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it },
+                        modifier = Modifier.semantics { contentDescription = "Include subfolders for new folder" })
+                }
                 ShelfButton(
                     text = "Add a folder",
                     onClick = { picker.launch(null) },
@@ -149,7 +165,7 @@ fun FoldersScreen(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Pick any folder holding .epub files — internal storage, an SD card, or a " +
-                        "network share your file manager can reach. Sub-folders are included. " +
+                        "network share your file manager can reach. Choose whether to include subfolders above. " +
                         "Android remembers the permission, so Shelf can read it again after a restart " +
                         "and delete a book when you explicitly confirm that action.",
                     style = MaterialTheme.typography.bodySmall,
@@ -188,6 +204,7 @@ fun FoldersScreen(
                             root = root,
                             onToggle = { viewModel.setEnabled(root.treeUri, it) },
                             onRemove = { confirmRemove = root },
+                            onSubfolders = { viewModel.setSubfolders(root.treeUri, it) },
                         )
                     }
                 }
@@ -224,7 +241,9 @@ private fun FolderRow(
     root: RootEntity,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
+    onSubfolders: (Boolean) -> Unit,
 ) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(ShelfColors.Panel)) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -252,6 +271,7 @@ private fun FolderRow(
         Switch(
             checked = root.enabled,
             onCheckedChange = onToggle,
+            modifier = Modifier.semantics { contentDescription = "Enable folder ${root.name}" },
             colors = SwitchDefaults.colors(
                 checkedThumbColor = ShelfColors.OnAccent,
                 checkedTrackColor = ShelfColors.Rose,
@@ -263,5 +283,15 @@ private fun FolderRow(
         IconButton(onClick = onRemove) {
             Icon(Icons.Outlined.Delete, contentDescription = "Remove folder", tint = ShelfColors.Muted)
         }
+    }
+    Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Include subfolders", color = ShelfColors.Text, style = MaterialTheme.typography.bodyMedium)
+            Text(if (root.includeSubfolders) "Quét cả thư mục con" else "Chỉ sách trong thư mục này · dữ liệu thư mục con vẫn được giữ",
+                color = ShelfColors.Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(checked = root.includeSubfolders, onCheckedChange = onSubfolders,
+            modifier = Modifier.semantics { contentDescription = "Include subfolders in ${root.name}" })
+    }
     }
 }

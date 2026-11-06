@@ -1,6 +1,9 @@
 package com.shelf.reader.ui.library
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -28,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +39,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.outlined.Toc
 import androidx.compose.material.icons.filled.Star
@@ -77,6 +82,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -110,6 +116,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.shelf.reader.data.BookCard
 import com.shelf.reader.data.CustomLibraryEntity
 import com.shelf.reader.data.ReaderSettings
@@ -127,6 +135,8 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val folder = state.activeCategory as? LibraryCategory.Folder
+    val browsingFolders = folder != null || state.activeCategory == LibraryCategory.Folders
     val query by viewModel.query.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val folderWriteRequest by viewModel.folderWriteRequest.collectAsStateWithLifecycle()
@@ -142,6 +152,9 @@ fun LibraryScreen(
     var confirmDeleteBook by remember { mutableStateOf<BookCard?>(null) }
     var showCreateLibrary by remember { mutableStateOf(false) }
     var manageLibrariesBook by remember { mutableStateOf<BookCard?>(null) }
+    BackHandler(enabled = folder != null && drawerState.isClosed && !searching && detailBook == null) {
+        viewModel.parentFolder()
+    }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val exportBackup = rememberLauncherForActivityResult(
@@ -187,8 +200,11 @@ fun LibraryScreen(
                         titleContentColor = ShelfColors.Text,
                     ),
                     navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.AutoMirrored.Outlined.Toc, contentDescription = "Menu")
+                        IconButton(onClick = {
+                            if (folder != null) viewModel.parentFolder() else scope.launch { drawerState.open() }
+                        }) {
+                            Icon(if (folder != null) Icons.AutoMirrored.Outlined.ArrowBack else Icons.AutoMirrored.Outlined.Toc,
+                                contentDescription = if (folder != null) "Parent folder" else "Menu")
                         }
                     },
                     title = {
@@ -213,10 +229,11 @@ fun LibraryScreen(
                         } else {
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(state.activeCategory.label, fontWeight = FontWeight.Bold)
+                                    Text(state.activeCategory.label, fontWeight = FontWeight.Bold, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        "${state.counts[LibraryFilter.ALL] ?: 0} books",
+                                        if (browsingFolders) "${state.folders.size} folders · ${state.counts[LibraryFilter.ALL] ?: 0} books" else "${state.counts[LibraryFilter.ALL] ?: 0} books",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = ShelfColors.Muted,
                                     )
@@ -226,6 +243,9 @@ fun LibraryScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = { viewModel.setCategory(LibraryCategory.Folders) }) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = "Browse folders")
+                        }
                         IconButton(onClick = {
                             if (searching) viewModel.setQuery("")
                             searching = !searching
@@ -260,6 +280,31 @@ fun LibraryScreen(
                     onSelect = viewModel::setFilter,
                 )
 
+                if (browsingFolders) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { viewModel.setCategory(LibraryCategory.Folders) }) { Text("Folders") }
+                        if (folder != null) {
+                            Text("›", color = ShelfColors.Muted)
+                            TextButton(onClick = { viewModel.setCategory(folder.copy(path = emptyList())) }) { Text(folder.name) }
+                            folder.path.forEachIndexed { index, name ->
+                                Text("›", color = ShelfColors.Muted)
+                                TextButton(onClick = { viewModel.setCategory(folder.copy(path = folder.path.take(index + 1))) }) { Text(name) }
+                            }
+                        }
+                        TextButton(onClick = onManageFolders) { Text("Scan options") }
+                    }
+                    if (state.unindexedFolders && !state.scan.running) Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Refresh to index existing subfolders", Modifier.weight(1f), color = ShelfColors.Muted,
+                            style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { viewModel.rescan(false) }) { Text("Refresh folder list") }
+                    }
+                    if (folder != null && query.isNotBlank()) Text("Search in this folder and its subfolders",
+                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall,
+                        color = ShelfColors.Muted)
+                }
+
                 AnimatedVisibility(
                     visible = (state.scan.running || state.scan.error.isNotEmpty()) && !state.loading,
                     enter = expandVertically(),
@@ -275,6 +320,20 @@ fun LibraryScreen(
                 ) {
                     when {
                         state.loading -> CenteredBox { CircularProgressIndicator(color = ShelfColors.Rose) }
+
+                        browsingFolders && (state.books.isNotEmpty() || (state.folders.isNotEmpty() && (folder == null || query.isBlank()))) -> BookGrid(
+                            books = state.books, density = state.density, settings = state.settings,
+                            coverPath = viewModel::coverPath, onOpen = onOpenBook, onDetails = { detailBook = it },
+                            onFavorite = viewModel::toggleFavorite,
+                            folders = if (folder != null && query.isNotBlank()) emptyList() else state.folders,
+                            onOpenFolder = { viewModel.setCategory(it.category) },
+                        )
+
+                        browsingFolders && state.roots.isNotEmpty() -> EmptyState(
+                            heading = if (query.isNotBlank()) "Nothing matches" else "No books in this folder",
+                            body = "Open Scan options to include subfolders, or refresh the folder list.",
+                            actionLabel = "Scan options", onAction = onManageFolders,
+                        )
 
                         state.books.isEmpty() && state.roots.isEmpty() -> EmptyState(
                             heading = "Your shelf is empty",
@@ -510,10 +569,16 @@ private fun LibraryDrawer(
             color = ShelfColors.Muted
         )
 
+        NavigationDrawerItem(
+            label = { Text("Browse folders") }, selected = state.activeCategory == LibraryCategory.Folders,
+            onClick = { onSelect(LibraryCategory.Folders) }, icon = { Icon(Icons.Outlined.FolderOpen, null) },
+            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding), colors = drawerItemColors(),
+        )
+
         state.roots.forEach { root ->
             NavigationDrawerItem(
                 label = { Text(root.name) },
-                selected = (state.activeCategory as? LibraryCategory.Folder)?.uri == root.treeUri,
+                selected = (state.activeCategory as? LibraryCategory.Folder)?.let { it.uri == root.treeUri && it.path.isEmpty() } == true,
                 onClick = { onSelect(LibraryCategory.Folder(root.treeUri, root.name)) },
                 icon = { Icon(Icons.Outlined.FolderOpen, null) },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
@@ -874,6 +939,8 @@ private fun BookGrid(
     onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
+    folders: List<LibraryFolderEntry> = emptyList(),
+    onOpenFolder: (LibraryFolderEntry) -> Unit = {},
 ) {
     val cells = when (density) {
         GridDensity.ADAPTIVE -> GridCells.Adaptive(minSize = 116.dp)
@@ -888,6 +955,20 @@ private fun BookGrid(
         verticalArrangement = Arrangement.spacedBy(if (density == GridDensity.LIST || density == GridDensity.DETAILED) 8.dp else 18.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
+        items(folders, key = { "folder:${it.uri}:${com.shelf.reader.data.BookFolders.encode(it.path)}" },
+            span = { GridItemSpan(maxLineSpan) }) { entry ->
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(ShelfColors.Panel)
+                .semantics { contentDescription = "Open folder ${entry.name}" }
+                .clickable { onOpenFolder(entry) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.FolderOpen, null, tint = ShelfColors.Rose)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(entry.name, color = ShelfColors.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${entry.books} books · gồm thư mục con", color = ShelfColors.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("›", color = ShelfColors.Muted)
+            }
+        }
         items(books, key = { it.id }) { book ->
             when (density) {
                 GridDensity.LIST -> BookRow(book, settings, coverPath(book.coverFile), onOpen, onDetails, onFavorite)

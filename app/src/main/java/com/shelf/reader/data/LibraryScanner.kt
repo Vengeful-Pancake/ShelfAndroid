@@ -85,6 +85,7 @@ class LibraryScanner(
         val docUri: Uri,
         val name: String,
         val folder: String,
+        val folderPath: List<String>,
         val size: Long,
         val modified: Long,
     )
@@ -92,6 +93,8 @@ class LibraryScanner(
     private suspend fun scan(force: Boolean) {
         val roots = dao.roots().filter { it.enabled }
         val found = ArrayList<Found>()
+        val completedRoots = HashSet<String>()
+        val errors = ArrayList<String>()
 
         for (root in roots) {
             currentCoroutineContext().ensureActive()
@@ -99,12 +102,24 @@ class LibraryScanner(
             val treeUri = Uri.parse(root.treeUri)
             val startId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
                 ?: continue
-            walk(root, treeUri, startId, root.name, found)
+            try {
+                walk(root, treeUri, startId, root.name, found)
+                completedRoots.add(root.treeUri)
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                errors.add("${root.name}: ${error.message ?: "Cannot list folder"}")
+            }
         }
 
         _status.value = _status.value.copy(found = found.size, done = 0)
 
-        val existing = dao.allBookIds().toMutableSet()
+        // Do not prune cached books for disabled, disconnected or partially unreadable roots.
+        val existing = roots.filter { it.treeUri in completedRoots }.flatMap { root ->
+            dao.booksForRoot(root.treeUri).filter { book ->
+                root.includeSubfolders || BookFolders.decode(book.folderPath)?.isEmpty() == true ||
+                    (book.folderPath == null && book.folder == root.name)
+            }.map(BookEntity::id)
+        }.toSet()
         val seen = HashSet<String>(found.size)
 
         coroutineScope {
@@ -117,7 +132,9 @@ class LibraryScanner(
 
                         val cached = dao.book(id)
                         if (cached != null && cached.stamp == stamp && !cached.broken && !force) {
-                            id to null
+                            val metadata = cached.copy(treeUri = item.treeUri, source = item.source,
+                                folder = item.folder, folderPath = BookFolders.encode(item.folderPath))
+                            id to metadata.takeIf { it != cached }
                         } else {
                             id to readBook(id, item, stamp, cached)
                         }
@@ -142,6 +159,7 @@ class LibraryScanner(
             gone.chunked(400).forEach { dao.deleteBooks(it) }
             gone.forEach { File(coverDir, "$it.jpg").delete() }
         }
+        if (errors.isNotEmpty()) _status.value = _status.value.copy(error = errors.joinToString("\n"))
     }
 
     private suspend fun walk(
@@ -151,8 +169,11 @@ class LibraryScanner(
         folderName: String,
         out: MutableList<Found>,
         depth: Int = 0,
+        folderPath: List<String> = emptyList(),
+        visited: MutableSet<String> = HashSet(),
     ) {
-        if (depth > 12) return
+        check(depth <= 64) { "Folder nesting exceeds 64 levels" }
+        check(visited.add(documentId)) { "Storage provider returned a folder cycle" }
         currentCoroutineContext().ensureActive()
 
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
@@ -166,10 +187,11 @@ class LibraryScanner(
 
         val subfolders = ArrayList<Pair<String, String>>()
 
-        runCatching {
-            context.contentResolver.query(childrenUri, projection, null, null, null)
-        }.getOrNull()?.use { cursor ->
+        val children = context.contentResolver.query(childrenUri, projection, null, null, null)
+            ?: error("Storage provider could not list $folderName")
+        children.use { cursor ->
             while (cursor.moveToNext()) {
+                currentCoroutineContext().ensureActive()
                 val childId = cursor.getString(0) ?: continue
                 val name = cursor.getString(1) ?: continue
                 val mime = cursor.getString(2).orEmpty()
@@ -177,8 +199,8 @@ class LibraryScanner(
                 val modified = if (cursor.isNull(4)) 0L else cursor.getLong(4)
 
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    if (name.startsWith(".") || name.startsWith("@") || name.startsWith("#")) continue
-                    subfolders.add(childId to name)
+                    if (name.startsWith(".")) continue
+                    if (root.includeSubfolders) subfolders.add(childId to name)
                     continue
                 }
                 if (!name.lowercase().endsWith(".epub") || name.startsWith(".")) continue
@@ -190,6 +212,7 @@ class LibraryScanner(
                         docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId),
                         name = name,
                         folder = folderName,
+                        folderPath = folderPath,
                         size = size,
                         modified = modified / 1000,
                     )
@@ -199,7 +222,7 @@ class LibraryScanner(
 
         // Recurse after closing the cursor so we never hold many open at once.
         for ((childId, name) in subfolders) {
-            walk(root, treeUri, childId, name, out, depth + 1)
+            walk(root, treeUri, childId, name, out, depth + 1, folderPath + name, visited)
         }
     }
 
@@ -213,6 +236,7 @@ class LibraryScanner(
             source = item.source,
             filename = item.name,
             folder = item.folder,
+            folderPath = BookFolders.encode(item.folderPath),
             stamp = stamp,
             size = item.size,
             added = item.modified,

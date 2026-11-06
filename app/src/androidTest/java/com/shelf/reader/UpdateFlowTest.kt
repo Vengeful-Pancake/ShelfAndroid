@@ -28,7 +28,7 @@ class UpdateFlowTest {
         @Volatile var error: Exception? = null
         override fun latest(): UpdateRelease {
             calls.incrementAndGet(); error?.let { throw it }
-            return UpdateRelease("0.3.7", "fixture", "https://github.com/Vengeful-Pancake/ShelfAndroid/releases/download/v0.3.7/Shelf-0.3.7.apk", 1000, "a".repeat(64), 12, "Manifest fixture")
+            return UpdateRelease("0.3.8", "fixture", "https://github.com/Vengeful-Pancake/ShelfAndroid/releases/download/v0.3.8/Shelf-0.3.8.apk", 1000, "a".repeat(64), 13, "Manifest fixture")
         }
     }
     @Test fun latestBuildAndRestartBothDetectNewReleaseDespiteInheritedRecentCheck() {
@@ -37,7 +37,7 @@ class UpdateFlowTest {
         val client = Client(); val first = model(client) { now }
         compose.runOnUiThread { first.check() }
         compose.waitUntil(10_000) { first.state.value is UpdateUi.Available }
-        assertEquals("0.3.7", first.status.value.latestVersion)
+        assertEquals("0.3.8", first.status.value.latestVersion)
         compose.runOnUiThread { first.dismiss() }
         val restarted = model(client) { now + 1000 }
         compose.runOnUiThread { restarted.check() }
@@ -62,7 +62,7 @@ class UpdateFlowTest {
         prefs.edit().putLong("last_attempt", now).commit()
         val client = Client(); val vm = model(client) { now }
         compose.runOnUiThread { compose.activity.setContent { com.shelf.reader.ui.theme.ShelfTheme { AppUpdateCoordinator(vm) } } }
-        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Shelf 0.3.7 đã có bản mới").assertExists(); true }.getOrDefault(false) }
+        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Shelf 0.3.8 đã có bản mới").assertExists(); true }.getOrDefault(false) }
         assertEquals(1, client.calls.get())
         compose.onNodeWithText("Tải qua trình duyệt").assertIsDisplayed()
     }
@@ -75,7 +75,7 @@ class UpdateFlowTest {
         compose.waitUntil(10_000) { vm.state.value is UpdateUi.Available }
         assertEquals("", url.get())
         compose.onNodeWithText("Tải qua trình duyệt").performClick()
-        assertEquals("https://github.com/${BuildConfig.UPDATE_REPOSITORY}/releases/tag/v0.3.7", url.get())
+        assertEquals("https://github.com/${BuildConfig.UPDATE_REPOSITORY}/releases/tag/v0.3.8", url.get())
         assertTrue(vm.state.value is UpdateUi.Idle)
     }
     @Test fun installedVersionAndRegisteredManualCheckAreVisibleFromLibraryAndBrowser() {
