@@ -4,6 +4,8 @@
         <include domain="database" path="shelf.db" />
     </cloud-backup>
     <device-transfer>
+        <exclude domain="sharedpref" path="release_updates.xml" />
+        <exclude domain="sharedpref" path="update_network.xml" />
         <exclude domain="database" path="shelf.db" />
         <exclude domain="file" path="covers" />
     </device-transfer>

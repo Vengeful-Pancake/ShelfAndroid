@@ -211,14 +211,17 @@ fun LibraryScreen(
                                 ),
                             )
                         } else {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(state.activeCategory.label, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "${state.counts[LibraryFilter.ALL] ?: 0} books",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = ShelfColors.Muted,
-                                )
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(state.activeCategory.label, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "${state.counts[LibraryFilter.ALL] ?: 0} books",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ShelfColors.Muted,
+                                    )
+                                }
+                                com.shelf.reader.update.AppVersionLabel()
                             }
                         }
                     },
@@ -747,7 +750,11 @@ private fun LibraryMenu(
         )
         DropdownMenuItem(
             text = { Text("Kiểm tra cập nhật") },
-            onClick = { open = false; com.shelf.reader.update.UpdateRequests.check.tryEmit(Unit) },
+            onClick = { open = false; com.shelf.reader.update.UpdateRequests.checkNow() },
+        )
+        DropdownMenuItem(
+            text = { Text("Phiên bản và cập nhật") },
+            onClick = { open = false; com.shelf.reader.update.UpdateRequests.showInfo() },
         )
     }
 

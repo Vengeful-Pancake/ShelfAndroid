@@ -28,6 +28,7 @@ fun NavigationSettingsDialog(settings: ReaderSettings, onChange: ((ReaderSetting
             }
             Spacer(Modifier.height(8.dp))
             Text("When hidden, tap the small arrow at the bottom to show it again.", style = MaterialTheme.typography.bodySmall)
+            com.shelf.reader.update.AppVersionLabel()
         }
     }, confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
 }

@@ -1,5 +1,34 @@
 # Local security review — 29 October 2026
 
+## Update availability audit 0.3.5 — 6 November 2026
+
+An anonymous request to the configured release API reproduced HTTP 403 with
+"API rate limit exceeded". The old coordinator silently swallowed automatic
+errors and persisted last_attempt before the request, suppressing subsequent
+checks for six hours even after an in-place upgrade. Actual APKs downloaded for
+0.3.2 / 0.3.3 / 0.3.4 have package com.shelf.reader, increasing build numbers
+7 / 8 / 9 and the same pinned certificate. This audit found no signing-key change.
+
+The replacement reads a bounded public release-asset manifest over HTTPS, using
+the documented latest/download URL, with REST fallback only for a missing old
+manifest. A reviewed update.json was added to 0.3.4 without replacing its APK;
+its anonymous asset URL returned valid metadata while the REST quota was exhausted.
+Publisher uploads occur in a draft and are published only after all assets finish.
+
+Manifest identity, URL, size, hash and build fields are validated. APK package,
+versionName, expected/increasing versionCode, non-debuggable flag and installed
+certificate equality are still checked before installation. No API token or
+private signing material is embedded. Cancellation uses unique partial APK files;
+updater timestamps/cooldowns are excluded from device transfer and Android backup.
+
+Cold starts/foreground checks and explicit UI progress replace the persisted
+six-hour suppression. Rate-limit server backoff is honored. App version details
+distinguish debug/release builds and expose check errors instead of reporting a
+failed check as "up to date".
+
+References: [GitHub REST rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api),
+[latest release asset links](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases).
+
 ## Confirmed publication target 0.3.2 — 3 November 2026
 
 The user completed GitHub CLI authentication as Vengeful-Pancake. The CLI

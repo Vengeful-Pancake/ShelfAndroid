@@ -82,8 +82,24 @@ if ($LASTEXITCODE -ne 0) { throw 'Tag push failed' }
 if ($LASTEXITCODE -eq 0) { throw 'Release already exists; inspect it rather than replacing public assets' }
 $notes = Join-Path $root "docs/releases/$tag.md"
 if (-not (Test-Path -LiteralPath $notes)) { throw 'Write release notes in docs/releases before publishing' }
-& $GhPath release create $tag $apk $checksumFile $sourceZip --repo $Repository --title "Shelf $version" --notes-file $notes --target $head --latest
+$manifest = Join-Path $root 'build/update.json'
+$releaseNotes = Get-Content -LiteralPath $notes -Raw
+$metadata = [ordered]@{
+    schemaVersion = 1
+    packageName = 'com.shelf.reader'
+    versionName = $version
+    versionCode = [long]$expectedCode
+    apkUrl = "https://github.com/$Repository/releases/download/$tag/Shelf-$version.apk"
+    apkSize = (Get-Item -LiteralPath $apk).Length
+    sha256 = $sha
+    releaseNotes = $releaseNotes.Substring(0, [Math]::Min(5000, $releaseNotes.Length))
+}
+[IO.File]::WriteAllText($manifest, ($metadata | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
+# Publish only once all assets (including the API-independent updater manifest) have uploaded.
+& $GhPath release create $tag $apk $checksumFile $sourceZip $manifest --repo $Repository --title "Shelf $version" --notes-file $notes --target $head --draft
 if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
+& $GhPath release edit $tag --repo $Repository --draft=false --latest
+if ($LASTEXITCODE -ne 0) { throw 'Draft upload finished but release publication failed; inspect the draft before retrying' }
 Write-Host "Published source: https://github.com/$Repository"
 Write-Host "Published release: https://github.com/$Repository/releases/tag/$tag"
 Write-Host "APK SHA-256: $sha"

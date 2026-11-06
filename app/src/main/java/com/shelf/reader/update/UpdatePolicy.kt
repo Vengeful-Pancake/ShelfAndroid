@@ -4,6 +4,8 @@ import java.net.URI
 
 internal object UpdatePolicy {
     const val MAX_APK_BYTES = 100L * 1024 * 1024
+    fun manifestUrl(repository: String) = "https://github.com/$repository/releases/latest/download/update.json"
+    fun apkUrl(repository: String, version: String) = "https://github.com/$repository/releases/download/v$version/Shelf-$version.apk"
     fun stableVersion(tag: String): String? = tag.removePrefix("v").removePrefix("V")
         .takeIf { it.matches(Regex("[0-9]+(\\.[0-9]+){1,3}")) }
     fun checksum(digest: String): String? = digest.removePrefix("sha256:").lowercase()

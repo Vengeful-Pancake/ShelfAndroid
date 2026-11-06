@@ -243,8 +243,8 @@ fun BrowserScreen(onBack: () -> Unit, onNavigationSettings: () -> Unit = {}, vie
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Browser menu") }
                     DropdownMenu(menu, { menu = false }) {
-                        listOf("New tab", "History", "Favorites", "Extensions", "Navigation bar").forEach { action -> DropdownMenuItem(text = { Text(action) }, onClick = {
-                            menu = false; when (action) { "New tab" -> openTab(); "Navigation bar" -> onNavigationSettings(); else -> panel = action }
+                        listOf("New tab", "History", "Favorites", "Extensions", "Navigation bar", "Phiên bản và cập nhật").forEach { action -> DropdownMenuItem(text = { Text(action) }, onClick = {
+                            menu = false; when (action) { "New tab" -> openTab(); "Navigation bar" -> onNavigationSettings(); "Phiên bản và cập nhật" -> com.shelf.reader.update.UpdateRequests.showInfo(); else -> panel = action }
                         }) }
                     }
                 }

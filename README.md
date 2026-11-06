@@ -404,9 +404,18 @@ the book.
 
 ## Updates and security
 
-Version 0.3.2 checks the configured public GitHub repository for stable releases
-on startup/resume and every six hours while the app is active. The library menu
-also has **Kiểm tra cập nhật**. Download starts after user confirmation. SHA-256
+Version 0.3.5 shows the installed version on Books. Tap it, or open **Phiên bản
+và cập nhật** from the library/browser menu, to see the build number, release/debug
+channel, last successful check, latest known release and errors. The library menu
+also has **Kiểm tra cập nhật**, with progress and an explicit result.
+
+Checks run at every cold start and return to the foreground, then every 15 minutes
+while active. Failures retry after one minute or GitHub's longer server backoff.
+The updater reads the public `releases/latest/download/update.json` asset first,
+avoiding the shared anonymous REST API quota. Older releases without a manifest
+can use the API fallback. Failed checks are recorded rather than treated as
+"up to date", and an older build's check timestamp does not suppress a new build.
+Download starts after user confirmation. SHA-256
 is mandatory; the APK must have the same package and signing certificate, a
 larger versionCode, and the advertised versionName. Redirects stay on GitHub's
 HTTPS download hosts. Debug apps do not update themselves with release APKs.
@@ -414,8 +423,9 @@ HTTPS download hosts. Debug apps do not update themselves with release APKs.
 Installing a verified update requires Android's **Allow from this source**
 permission for Shelf and the system installer confirmation. The narrowly scoped
 update FileProvider exposes only cached updates. Installation is never silent;
-do not disable Play Protect. Install 0.3.2 once over older/local builds to receive
-future update prompts from the confirmed publishing repository. Offline checks stay quiet.
+do not disable Play Protect. If an older updater cannot find this release, install
+0.3.5 once over it without uninstalling. Offline errors remain visible in the
+version/update details rather than interrupting reading with a dialog.
 
 The signing key remains on the maintainer's machine and is never published.
 See `docs/RELEASING.md` for the reviewed-source and signed-release workflow.

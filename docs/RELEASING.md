@@ -26,9 +26,12 @@ token or signing password into chat, source files or an issue.
 4. Run `./scripts/Publish-Release.ps1`. It verifies GitHub authentication,
    requires clean committed source, refuses tracked signing/config/build files,
    builds and tests, verifies the release certificate, creates the public repo
-   if needed, pushes main and the tag, and publishes APK + SHA-256 + source ZIP.
-5. Verify the public release API returns a SHA-256 `digest` for the exact asset
-   `Shelf-VERSION.apk`. The app refuses release assets missing that digest.
+   if needed, pushes main and the tag, uploads APK + SHA-256 + source ZIP +
+   `update.json` to a draft, then publishes it as latest after uploads finish.
+5. Verify `https://github.com/OWNER/REPO/releases/latest/download/update.json`
+   returns the versionName, increasing versionCode, exact versioned APK URL,
+   APK size and matching SHA-256. Keep schemaVersion 1 compatible with existing
+   clients. API fallback still requires GitHub's asset `digest` for older releases.
 
 GitHub Actions runs tests and creates a **debug** build on pushes and PRs. It
 does not receive signing keys and does not publish unsigned production updates.
@@ -42,12 +45,28 @@ anonymous updater endpoint.
 
 ## Update behavior
 
-Checks run at startup and on resume (six-hour throttle), then every six hours
-while the app is active. The menu check bypasses the throttle. The user chooses
+Checks run at cold startup and on returning to the foreground, then every 15
+minutes while active. Failed checks retry after one minute or server backoff.
+Each new process checks immediately instead of inheriting the previous build's
+six-hour timestamp. Manual requests are queued until the root coordinator can
+handle them and show progress/results. The user chooses
 whether to download; only the verified cached APK can be offered to Android's
 installer. Package identity, versionName, increasing versionCode and the exact
 current signing certificate are checked. Certificate rotation requires a
 deliberate future migration; it is not accepted implicitly.
+
+The primary manifest uses the documented GitHub latest-release asset URL, so
+normal checks do not consume the REST API's anonymous per-IP quota. Only a 404
+manifest falls back to the API. Rate-limit headers are honored for API retries;
+no account token is placed in the APK. All metadata redirects must stay HTTPS
+on GitHub/CDN hosts. Malformed metadata fails closed. A manifest does not grant
+install trust: the downloaded APK must still match the installed signing cert,
+package, advertised version, increasing build number, size and SHA-256.
+
+Version/update details show the installed channel, last attempt/success, latest
+known version, source and error. Debug builds explicitly identify themselves and
+do not self-install a production package. Updater timestamps and API cooldowns
+are excluded from Android backup/transfer; reading preferences remain separate.
 
 REQUEST_INSTALL_PACKAGES is now intentionally declared for this user-requested
 feature. Permission is requested only at the install step. No accessibility,

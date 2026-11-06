@@ -21,8 +21,8 @@ android {
         applicationId = "com.shelf.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.3.4"
+        versionCode = 10
+        versionName = "0.3.5"
         val updateRepository = providers.gradleProperty("updateRepository").orElse("Vengeful-Pancake/ShelfAndroid").get()
         require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
