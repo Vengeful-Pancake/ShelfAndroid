@@ -3,10 +3,12 @@ package com.shelf.reader.epub
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
 import org.w3c.dom.Node
 import java.io.Closeable
 import java.net.URI
 import java.text.Normalizer
+import java.util.TreeMap
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element as DomElement
 
@@ -33,6 +35,9 @@ class EpubBook(private val zip: ZipReader) : Closeable {
                 "description|bookdescription|summary|synopsis|blurb|copyright|colophon|imprint|" +
                 "bookinfo|metadata|aboutthisbook)(page)?\\d*$"
         )
+        private val WHITESPACE = Regex("\\s+")
+        private val COMBINING_MARKS = Regex("\\p{M}+")
+        private val NON_LATIN_ALPHANUMERIC = Regex("[^a-z0-9]+")
 
         private val MIME_BY_EXTENSION = mapOf(
             "html" to "text/html", "xhtml" to "application/xhtml+xml", "htm" to "text/html",
@@ -64,6 +69,9 @@ class EpubBook(private val zip: ZipReader) : Closeable {
 
     private val packageSpine: List<String>
     private val spineTitles: Array<String>
+    private val spineByPath: Map<String, Int>
+    private val spineByLowerPath: Map<String, Int>
+    private val tocLabels: Map<Int, String>
 
     init {
         opfPath = findOpf()
@@ -74,10 +82,17 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         val packageMeta = readMeta(opf)
         packageSpine = readSpine(opf)
         val navigation = readNavigation(opf)
+        val navigationLabels = TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER).apply {
+            navigation.forEach { putIfAbsent(it.href, it.label) }
+        }
+        val manifestByPath = TreeMap<String, ManifestItem>(String.CASE_INSENSITIVE_ORDER).apply {
+            manifest.values.forEach { putIfAbsent(it.href, it) }
+        }
         val classified = packageSpine.map { path ->
             classifySection(
                 path = path,
-                navigationLabel = navigation.firstOrNull { samePath(it.href, path) }?.label.orEmpty(),
+                item = manifestByPath[path],
+                navigationLabel = navigationLabels[path].orEmpty(),
                 metadata = packageMeta,
             )
         }
@@ -93,7 +108,10 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         meta = packageMeta.copy(chapters = spine.size)
         coverPath = findCover(opf)
         spineTitles = Array(spine.size) { "" }
+        spineByPath = buildMap { spine.forEachIndexed { index, path -> putIfAbsent(path, index) } }
+        spineByLowerPath = buildMap { spine.forEachIndexed { index, path -> putIfAbsent(path.lowercase(), index) } }
         toc = readToc(navigation)
+        tocLabels = buildMap { toc.forEach { putIfAbsent(it.spineIndex, it.label) } }
     }
 
     val chapterCount: Int get() = spine.size
@@ -185,7 +203,8 @@ class EpubBook(private val zip: ZipReader) : Closeable {
             author = creators.joinToString(", "),
             language = dc("language"),
             publisher = dc("publisher"),
-            description = cleanMetadataDescription(dc("description")),
+            description = md.childrenNamed(NS_DC, "description").map { cleanMetadataDescription(it.trimmedText) }
+                .filter(String::isNotEmpty).distinct().joinToString("\n\n"),
             series = series,
             identifier = dc("identifier"),
             subjects = md.childrenNamed(NS_DC, "subject").map { it.trimmedText }.filter { it.isNotEmpty() },
@@ -228,21 +247,26 @@ class EpubBook(private val zip: ZipReader) : Closeable {
 
     private fun classifySection(
         path: String,
+        item: ManifestItem?,
         navigationLabel: String,
         metadata: EpubMeta,
     ): EpubSection {
-        val item = manifest.values.firstOrNull { samePath(it.href, path) }
         val properties = item?.properties.orEmpty()
-            .split(Regex("\\s+"))
+            .split(WHITESPACE)
             .map(String::lowercase)
         if ("nav" in properties) return EpubSection(path, EpubSectionKind.CONTENTS, navigationLabel)
+        // A numbered chapter or part in the TOC already determines the classification.
+        val navigationKey = semanticKey(navigationLabel)
+        if (CONTENT_NAME.containsMatchIn(navigationKey)) {
+            return EpubSection(path, EpubSectionKind.CONTENT, navigationLabel)
+        }
 
         val soup = runCatching { Jsoup.parse(zip.readText(path), "") }.getOrNull()
             ?: return EpubSection(path, EpubSectionKind.CONTENT, navigationLabel)
         val heading = soup.selectFirst("h1, h2, h3")?.text().orEmpty()
         val firstBlock = soup.body()?.selectFirst("h1, h2, h3, h4, h5, h6, p")?.text().orEmpty()
         val documentTitle = soup.selectFirst("title")?.text().orEmpty()
-        val names = listOf(navigationLabel, heading, firstBlock, documentTitle)
+        val names = listOf(heading, firstBlock, documentTitle)
             .map(::semanticKey)
             .filter(String::isNotEmpty)
 
@@ -253,12 +277,12 @@ class EpubBook(private val zip: ZipReader) : Closeable {
 
         val semanticTokens = soup.allElements.flatMap { element ->
             listOf(element.attr("epub:type"), element.attr("type"), element.attr("role"))
-                .flatMap { it.split(Regex("\\s+")) }
+                .flatMap { it.split(WHITESPACE) }
                 .map(::semanticKey)
         }.filter(String::isNotEmpty).toSet()
         semanticKind(semanticTokens)?.let { return EpubSection(path, it, navigationLabel) }
 
-        names.firstNotNullOfOrNull(::namedAuxiliaryKind)?.let {
+        (namedAuxiliaryKind(navigationKey) ?: names.firstNotNullOfOrNull(::namedAuxiliaryKind))?.let {
             return EpubSection(path, it, navigationLabel)
         }
 
@@ -272,7 +296,7 @@ class EpubBook(private val zip: ZipReader) : Closeable {
             )
         }
 
-        val text = soup.body()?.text().orEmpty().replace(Regex("\\s+"), " ").trim()
+        val text = soup.body()?.text().orEmpty().replace(WHITESPACE, " ").trim()
         val textKey = semanticKey(text)
         val titleKey = semanticKey(metadata.title)
         val authorKey = semanticKey(metadata.author)
@@ -326,9 +350,9 @@ class EpubBook(private val zip: ZipReader) : Closeable {
     }
 
     private fun semanticKey(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
+        .replace(COMBINING_MARKS, "")
         .lowercase()
-        .replace(Regex("[^a-z0-9]+"), " ")
+        .replace(NON_LATIN_ALPHANUMERIC, " ")
         .trim()
 
     private fun cleanMetadataTitle(value: String): String {
@@ -342,7 +366,11 @@ class EpubBook(private val zip: ZipReader) : Closeable {
     }
 
     private fun cleanMetadataDescription(value: String): String {
-        val description = cleanMetadataText(value)
+        if (value.isBlank()) return ""
+        val body = Jsoup.parseBodyFragment(value).body()
+        body.select("p, div, li, blockquote, h1, h2, h3, h4, h5, h6").forEach { it.after(TextNode("\n\n")) }
+        val description = body.wholeText().lineSequence().map(String::trim).joinToString("\n")
+            .replace(Regex("\n{3,}"), "\n\n").trim()
         val key = semanticKey(description)
         return if (
             key.matches(Regex("^(generated|created|converted|exported) by [a-z0-9 ]+$")) ||
@@ -372,15 +400,21 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         manifest.values.firstOrNull {
             it.mediaType.startsWith("image/") && it.href.lowercase().contains("cover")
         }?.let { return it.href }
+        for (section in auxiliarySections) {
+            if (section.kind != EpubSectionKind.COVER) continue
+            val page = runCatching { Jsoup.parse(zip.readText(section.path)) }.getOrNull() ?: continue
+            val base = EpubPaths.dirName(section.path)
+            for (image in page.select("img[src], image")) {
+                val href = image.attr("src").ifBlank { image.attr("href") }.ifBlank { image.attr("xlink:href") }
+                if (href.isBlank() || hasScheme(href)) continue
+                val path = EpubPaths.resolve(base, href)
+                if (zip.has(path) && guessMime(path).startsWith("image/")) return path
+            }
+        }
         return ""
     }
 
-    private fun spineIndexOf(path: String): Int {
-        val exact = spine.indexOf(path)
-        if (exact >= 0) return exact
-        val low = path.lowercase()
-        return spine.indexOfFirst { it.lowercase() == low }
-    }
+    private fun spineIndexOf(path: String): Int = spineByPath[path] ?: spineByLowerPath[path.lowercase()] ?: -1
 
     // ------------------------------------------------------------------- toc
 
@@ -524,8 +558,7 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         )
     }
 
-    fun tocLabelFor(index: Int): String =
-        toc.firstOrNull { it.spineIndex == index }?.label.orEmpty()
+    fun tocLabelFor(index: Int): String = tocLabels[index].orEmpty()
 
     /**
      * Converts an index saved by versions that counted the complete package spine

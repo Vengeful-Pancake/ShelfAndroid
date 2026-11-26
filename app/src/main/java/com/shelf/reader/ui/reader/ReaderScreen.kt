@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -145,16 +146,24 @@ fun ReaderScreen(
 
     // Hide the system bars along with our own, so the page gets the whole screen.
     val window = (view.context as? android.app.Activity)?.window
-    DisposableEffect(state.barsVisible, state.settings.fullscreen, window) {
+    val pageColor = Color(android.graphics.Color.parseColor(state.settings.background))
+    val darkSystemIcons = !state.barsVisible && pageColor.luminance() > .179f
+    DisposableEffect(state.barsVisible, state.settings.fullscreen, darkSystemIcons, window) {
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
         controller?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.isAppearanceLightStatusBars = darkSystemIcons
+        controller?.isAppearanceLightNavigationBars = darkSystemIcons
         if (state.settings.fullscreen && !state.barsVisible) {
             controller?.hide(WindowInsetsCompat.Type.systemBars())
         } else {
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            controller?.isAppearanceLightStatusBars = false
+            controller?.isAppearanceLightNavigationBars = false
+        }
     }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -185,7 +194,6 @@ fun ReaderScreen(
 
     BackHandler(enabled = sheet != null) { sheet = null }
 
-    val pageColor = Color(android.graphics.Color.parseColor(state.settings.background))
     val textColor = Color(android.graphics.Color.parseColor(state.settings.foreground))
     val localController = remember(bookId) { LocalReaderController(view.context, bookId, state.bookTitle) }
     LaunchedEffect(state.bookTitle) { localController.updateTitle(state.bookTitle) }

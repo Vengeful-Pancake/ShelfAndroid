@@ -1,15 +1,17 @@
 package com.shelf.reader.ui.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -19,44 +21,61 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.Toc
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.shelf.reader.data.BookCard
 import com.shelf.reader.ui.ShelfButton
 import com.shelf.reader.ui.ShelfGhostButton
 import com.shelf.reader.ui.theme.ShelfColors
-import java.text.DateFormat
-import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BookDetailSheet(
     book: BookCard,
     coverPath: String?,
-    showCover: Boolean = true,
     onDismiss: () -> Unit,
-    onRead: () -> Unit,
+    onStart: () -> Unit,
+    onContinue: () -> Unit,
+    onContents: () -> Unit,
+    onTag: (String) -> Unit,
     onFavorite: () -> Unit,
     onResetProgress: () -> Unit,
     onManageLibraries: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var expandedCover by remember(book.id) { mutableStateOf(false) }
+    var showMenu by remember(book.id) { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -65,171 +84,152 @@ fun BookDetailSheet(
         contentColor = ShelfColors.Text,
     ) {
         Column(
-            Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding()
-                .padding(bottom = 20.dp),
+            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)
+                .navigationBarsPadding().padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row {
-                if (showCover) {
-                    Box(
-                        Modifier
-                            .width(104.dp)
-                            .height(150.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(ShelfColors.Raised),
-                    ) { CoverImage(coverPath, book.title) }
-
-                    Spacer(Modifier.width(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                val coverModifier = Modifier.width(112.dp).aspectRatio(0.68f)
+                    .clip(RoundedCornerShape(8.dp)).background(ShelfColors.Raised)
+                Box(
+                    if (coverPath == null) coverModifier
+                    else coverModifier.semantics { contentDescription = "Cover of ${book.title}" }
+                        .clickable(onClickLabel = "View cover") { expandedCover = true },
+                ) {
+                    CoverImage(coverPath, contentScale = ContentScale.Fit)
                 }
-
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        book.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = ShelfColors.Text,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            book.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f).padding(top = 4.dp),
+                        )
+                        Box {
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(Icons.Outlined.MoreVert, contentDescription = "Book menu")
+                            }
+                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(if (book.favorite) "Unpin book" else "Pin book") },
+                                    leadingIcon = { Icon(if (book.favorite) Icons.Filled.Star else Icons.Outlined.StarBorder, null) },
+                                    onClick = { showMenu = false; onFavorite() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to library") },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Label, null) },
+                                    onClick = { showMenu = false; onManageLibraries() },
+                                )
+                                if (book.started) DropdownMenuItem(
+                                    text = { Text("Forget my place") },
+                                    leadingIcon = { Icon(Icons.Outlined.RestartAlt, null) },
+                                    onClick = { showMenu = false; onResetProgress() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete from device", color = ShelfColors.Danger) },
+                                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, tint = ShelfColors.Danger) },
+                                    onClick = { showMenu = false; onDelete() },
+                                )
+                            }
+                        }
+                    }
+                    Text(book.author.ifBlank { "Unknown author" }, color = ShelfColors.Muted)
+                    if (book.series.isNotBlank()) Text(book.series, color = ShelfColors.Muted)
+                    val facts = listOfNotNull(
+                        "${book.chapters} chapters".takeIf { book.chapters > 0 },
+                        book.language.takeIf(String::isNotBlank)?.uppercase(),
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        book.author.ifBlank { "Unknown author" },
-                        style = MaterialTheme.typography.bodyMedium,
+                    if (facts.isNotEmpty()) Text(
+                        facts.joinToString(" · "),
                         color = ShelfColors.Muted,
+                        style = MaterialTheme.typography.bodySmall,
                     )
-                    Spacer(Modifier.height(10.dp))
+                }
+            }
 
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (book.series.isNotBlank()) Tag(book.series)
-                        if (book.chapters > 0) Tag("${book.chapters} chapters")
-                        if (book.language.isNotBlank()) Tag(book.language.uppercase())
-                        if (book.size > 0) Tag(formatSize(book.size))
-                        if (book.folder.isNotBlank()) Tag(book.folder)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (book.started && !book.broken) {
+                    Text(
+                        listOfNotNull("${book.percent}% read", book.lastChapter?.takeIf(String::isNotBlank)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ShelfColors.Rose,
+                    )
+                    LinearProgressIndicator(
+                        progress = { book.percent / 100f },
+                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                        color = ShelfColors.Rose,
+                        trackColor = ShelfColors.Hair,
+                    )
+                }
+                ShelfButton(
+                    text = if (book.started) "Continue reading" else "Start reading",
+                    onClick = if (book.started) onContinue else onStart,
+                    icon = Icons.AutoMirrored.Outlined.MenuBook,
+                    enabled = !book.broken,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (!book.broken) ShelfGhostButton(
+                    text = "Contents",
+                    onClick = onContents,
+                    icon = Icons.AutoMirrored.Outlined.Toc,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (book.started && !book.broken) {
+                    ShelfGhostButton(
+                        text = "Start from beginning",
+                        onClick = onStart,
+                        icon = Icons.Outlined.RestartAlt,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (book.broken) Text("Shelf could not open this EPUB.", color = ShelfColors.Danger)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Description", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    book.description.ifBlank { "No description available." },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (book.description.isBlank()) ShelfColors.Muted else ShelfColors.Text,
+                )
+            }
+
+            val tags = remember(book.subjects, book.catalogTags) { book.tags }
+            if (tags.isNotEmpty()) {
+                Column {
+                    Text("Tags", style = MaterialTheme.typography.titleMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (tag in tags) SuggestionChip(onClick = { onTag(tag) }, label = { Text(tag) })
                     }
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
-
-            if (book.description.isNotBlank()) {
-                Text(
-                    book.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ShelfColors.Text,
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            if (book.publisher.isNotBlank()) {
-                Text(
-                    "Published by ${book.publisher}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ShelfColors.Muted,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-
-            if (book.started) {
-                Text(
-                    if (book.lastChapter.isNullOrBlank()) "${book.percent}% read"
-                    else "${book.percent}% read · ${book.lastChapter}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ShelfColors.Rose,
-                )
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { book.percent / 100f },
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                    color = ShelfColors.Rose,
-                    trackColor = ShelfColors.Hair,
-                )
-                book.lastRead?.takeIf { it > 0 }?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Last opened ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it))}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ShelfColors.Muted,
-                    )
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-
-            if (book.broken) {
-                Text(
-                    "This file will not open. It may be damaged, or protected by DRM.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ShelfColors.Danger,
-                )
-                Spacer(Modifier.height(16.dp))
-            }
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ShelfButton(
-                    text = if (book.started) "Continue reading" else "Start reading",
-                    onClick = onRead,
-                    icon = Icons.AutoMirrored.Outlined.MenuBook,
-                    enabled = !book.broken,
-                    modifier = Modifier.weight(1f),
-                )
-                ShelfGhostButton(
-                    text = if (book.favorite) "Pinned" else "Pin",
-                    onClick = onFavorite,
-                    icon = if (book.favorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-            ShelfGhostButton(
-                text = "Add to library",
-                onClick = onManageLibraries,
-                icon = Icons.AutoMirrored.Outlined.Label,
-                modifier = Modifier.fillMaxWidth(),
+            val details = listOfNotNull(
+                book.publisher.takeIf(String::isNotBlank)?.let { "Published by $it" },
+                book.folder.takeIf(String::isNotBlank),
+                formatSize(book.size).takeIf { book.size > 0 },
             )
-
-            if (book.started) {
-                Spacer(Modifier.height(10.dp))
-                ShelfGhostButton(
-                    text = "Forget my place",
-                    onClick = onResetProgress,
-                    icon = Icons.Outlined.RestartAlt,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            if (details.isNotEmpty()) {
+                Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = ShelfColors.Muted)
             }
-
-            Spacer(Modifier.height(10.dp))
-            ShelfGhostButton(
-                text = "Delete from device",
-                onClick = onDelete,
-                icon = Icons.Outlined.DeleteOutline,
-                danger = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Permanently removes the EPUB from its source folder.",
-                style = MaterialTheme.typography.bodySmall,
-                color = ShelfColors.Muted,
-            )
         }
     }
-}
 
-@Composable
-private fun Tag(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelSmall,
-        color = ShelfColors.Muted,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(ShelfColors.Raised)
-            .padding(horizontal = 7.dp, vertical = 3.dp),
-    )
+    if (expandedCover) Dialog(onDismissRequest = { expandedCover = false }) {
+        Box(
+            Modifier.fillMaxWidth().heightIn(max = 560.dp).aspectRatio(0.68f)
+                .clip(RoundedCornerShape(10.dp)).background(ShelfColors.Ink),
+        ) {
+            CoverImage(coverPath, contentScale = ContentScale.Fit)
+            IconButton(
+                onClick = { expandedCover = false },
+                modifier = Modifier.align(Alignment.TopEnd).background(ShelfColors.Panel, RoundedCornerShape(100)),
+            ) {
+                Icon(Icons.Outlined.Close, "Close cover", tint = ShelfColors.Text)
+            }
+        }
+    }
 }
 
 private fun formatSize(bytes: Long): String = when {

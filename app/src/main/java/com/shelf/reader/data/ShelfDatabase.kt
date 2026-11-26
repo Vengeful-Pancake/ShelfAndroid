@@ -9,6 +9,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
@@ -51,7 +52,7 @@ interface ShelfDao {
         """
         SELECT b.id, b.docUri, b.treeUri, b.title, b.author, b.series,
                b.language, b.publisher, b.description, b.source, b.filename, b.folder,
-               b.chapters, b.size, b.added, b.broken, b.coverFile, b.folderPath,
+               b.chapters, b.size, b.added, b.broken, b.coverFile, b.folderPath, b.subjects, b.catalogTags,
                p.chapter AS chapter, p.scrollOffset AS scrollOffset, p.at AS lastRead,
                p.title AS lastChapter,
                CASE WHEN f.bookId IS NULL THEN 0 ELSE 1 END AS favorite
@@ -73,6 +74,13 @@ interface ShelfDao {
 
     @Query("SELECT * FROM books WHERE treeUri = :treeUri")
     suspend fun booksForRoot(treeUri: String): List<BookEntity>
+
+    @Query("""
+        SELECT EXISTS(SELECT 1 FROM books b JOIN roots r ON r.treeUri = b.treeUri
+        WHERE r.enabled AND b.stamp NOT LIKE :currentStamp AND
+              (r.includeSubfolders OR b.folderPath = '[]' OR (b.folderPath IS NULL AND b.folder = r.name)))
+    """)
+    suspend fun hasOutdatedBooks(currentStamp: String): Boolean
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBooks(books: List<BookEntity>)
@@ -307,9 +315,10 @@ interface ShelfDao {
         CustomLibraryEntity::class,
         LibraryBookJoinEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
+@TypeConverters(BookTagConverter::class)
 abstract class ShelfDatabase : RoomDatabase() {
     abstract fun dao(): ShelfDao
 
@@ -320,6 +329,13 @@ abstract class ShelfDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN folderPath TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE roots ADD COLUMN includeSubfolders INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE books ADD COLUMN catalogTags TEXT NOT NULL DEFAULT '[]'")
             }
         }
 
@@ -360,7 +376,7 @@ abstract class ShelfDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShelfDatabase::class.java,
                 "shelf.db",
-            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
     }
 }

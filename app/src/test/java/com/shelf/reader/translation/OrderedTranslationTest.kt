@@ -48,4 +48,15 @@ class OrderedTranslationTest {
     @Test fun chineseIntroducedByVietnameseRulesIsTranslatedBeforeNextRule() {
         assertEquals("anh tư", OrderedTranslation(base, rules("\$[chào ngươi]=李四", "\$[lý tứ]=anh tư")).translate("你好"))
     }
+
+    @Test fun loadsTheDictionaryOnlyWhenTextNeedsChineseLookup() {
+        var loads = 0
+        val engine = OrderedTranslation({ loads++; base }, listOf(TranslationRule("tứ", "李四")))
+        assertEquals("một ngày, đẹp", engine.translate("một ngày， đẹp"))
+        assertEquals(TranslationToken("ngày", 4, 8, true), engine.tokens("một ngày", original = true).last())
+        assertEquals(0, loads)
+        assertEquals("lý tứ", engine.translate("tứ"))
+        assertEquals("chào ngươi", engine.translate("你好"))
+        assertEquals(1, loads)
+    }
 }

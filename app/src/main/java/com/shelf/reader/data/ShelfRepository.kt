@@ -64,6 +64,7 @@ class ShelfRepository(
             language = meta.language,
             publisher = meta.publisher,
             description = meta.description,
+            subjects = cleanBookTags(meta.subjects),
             chapters = meta.chapters,
         )
         if (updated != current) dao.upsertBooks(listOf(updated))
@@ -76,7 +77,7 @@ class ShelfRepository(
         val uri = Uri.parse(entry.docUri)
         if (!documentExists(uri)) throw EpubException("The file is no longer at that location")
 
-        val book = EpubOpener.open(context, uri)
+        val book = EpubOpener.open(context, uri, entry.stamp)
         synchronized(booksLock) { openBooks[id] = book }
         book
     }

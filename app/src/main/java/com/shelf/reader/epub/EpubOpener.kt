@@ -6,6 +6,7 @@ import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 
 /**
  * Turns a Storage Access Framework document into an [EpubBook].
@@ -21,7 +22,7 @@ object EpubOpener {
 
     private val cacheLock = Any()
 
-    fun open(context: Context, uri: Uri): EpubBook {
+    fun open(context: Context, uri: Uri, version: String, refreshCache: Boolean = false): EpubBook {
         val resolver = context.contentResolver
 
         // Fast path: seek directly inside the document.
@@ -47,33 +48,41 @@ object EpubOpener {
         }.onFailure { if (it is EpubException) throw it }
 
         // Slow path: copy once, then read from the copy.
-        val copy = synchronized(cacheLock) { cacheCopy(context, uri) }
+        val copy = synchronized(cacheLock) { cacheCopy(context, uri, version, refreshCache) }
         val raf = RandomAccessFile(copy, "r")
         val closer = Closeable { runCatching { raf.close() } }
         return EpubBook(ZipReader.open(raf.channel, closer))
     }
 
-    private fun cacheCopy(context: Context, uri: Uri): File {
+    private fun cacheCopy(context: Context, uri: Uri, version: String, refresh: Boolean): File {
         val dir = File(context.cacheDir, CACHE_DIR).apply { mkdirs() }
-        val name = uri.toString().hashCode().toUInt().toString(16) + ".epub"
+        val key = MessageDigest.getInstance("SHA-256").digest("$uri\n$version".toByteArray())
+        val name = android.util.Base64.encodeToString(key, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP).trimEnd('=') + ".epub"
         val target = File(dir, name)
-        if (target.exists() && target.length() > 0) {
+        if (!refresh && target.exists() && target.length() > 0) {
             target.setLastModified(System.currentTimeMillis())
             return target
         }
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
-        } ?: throw EpubException("The file could not be opened")
-        trimCache(dir)
+        val temp = File.createTempFile("epub-", ".tmp", dir)
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                temp.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
+            } ?: throw EpubException("The file could not be opened")
+            if (!temp.renameTo(target)) throw EpubException("Could not cache the EPUB")
+        } finally {
+            temp.delete()
+        }
+        trimCache(dir, target)
         return target
     }
 
     /** Keep the copy directory under a sane size — oldest first. */
-    private fun trimCache(dir: File) {
+    private fun trimCache(dir: File, current: File) {
         val files = dir.listFiles()?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         for (file in files) {
             if (total <= CACHE_BUDGET_BYTES) break
+            if (file == current) continue
             total -= file.length()
             file.delete()
         }

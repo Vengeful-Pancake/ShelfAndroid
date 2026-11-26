@@ -23,10 +23,14 @@ data class TranslationToken(val text: String, val start: Int, val end: Int, val 
 
 /** Source rules -> Smooth -> translated-text rules -> capitalization, with original offsets retained. */
 class OrderedTranslation(
-    private val dictionary: PhraseDictionary,
+    loadDictionary: () -> PhraseDictionary,
     global: List<TranslationRule>,
     story: List<TranslationRule> = emptyList(),
 ) {
+    constructor(dictionary: PhraseDictionary, global: List<TranslationRule>, story: List<TranslationRule> = emptyList()) :
+        this({ dictionary }, global, story)
+
+    private val dictionary by lazy(loadDictionary)
     // A story definition replaces the corresponding global definition, including its capitalization.
     private val storySources = story.map { it.source }.toSet()
     private val rules = global.filter { it.source !in storySources } + story
@@ -106,11 +110,12 @@ class OrderedTranslation(
             }
             mapped = translated.build()
         }
-        smooth()
+        fun needsSmooth(text: String) = text.any { han(it) || it in "，、。！？：；（）" }
+        if (needsSmooth(mapped.text)) smooth()
         rules.filter { it.source.none(::han) }.forEach { rule ->
             replace(rule)
             // A translated-text rule may introduce Chinese again. Resolve it before the next rule.
-            if (rule.target.any(::han)) smooth()
+            if (rule.target.any(::han) && needsSmooth(mapped.text)) smooth()
         }
         if (mapped.caps.none { it != 0 }) return mapped
         val capitalized = HashSet<Int>()

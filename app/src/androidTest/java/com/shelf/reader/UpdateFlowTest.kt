@@ -20,7 +20,9 @@ class UpdateFlowTest {
     @After fun cleanup() { compose.runOnUiThread { models.forEach { it.dismiss() } }; prefs.edit().clear().commit(); UpdateRequests.info.value = false }
     private fun model(client: UpdateClient, now: () -> Long): UpdateViewModel {
         lateinit var result: UpdateViewModel
-        compose.runOnUiThread { result = UpdateViewModel(compose.activity.application, client, UpdateIdentity(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toLong(), false), prefs, now) }
+        compose.runOnUiThread {
+            result = UpdateViewModel(compose.activity.application, client, UpdateIdentity("0.3.7", 12, false), prefs, now)
+        }
         models.add(result); return result
     }
     private class Client : UpdateClient {

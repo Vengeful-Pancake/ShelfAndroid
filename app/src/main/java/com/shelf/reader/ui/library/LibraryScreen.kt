@@ -14,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,12 +33,16 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.outlined.Toc
 import androidx.compose.material.icons.filled.Star
@@ -93,8 +96,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,14 +126,17 @@ import androidx.compose.ui.semantics.semantics
 import com.shelf.reader.data.BookCard
 import com.shelf.reader.data.CustomLibraryEntity
 import com.shelf.reader.data.ReaderSettings
+import com.shelf.reader.epub.TocEntry
 import com.shelf.reader.ui.ShelfButton
+import com.shelf.reader.ui.reader.ContentsSheet
 import com.shelf.reader.ui.theme.ShelfColors
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
-    onOpenBook: (String) -> Unit,
+    onOpenBook: (String, Int?, String) -> Unit,
     onManageFolders: () -> Unit,
     onOpenOpds: () -> Unit,
     onOpenBrowser: () -> Unit,
@@ -137,6 +145,8 @@ fun LibraryScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val folder = state.activeCategory as? LibraryCategory.Folder
     val browsingFolders = folder != null || state.activeCategory == LibraryCategory.Folders
+    val browsingTags = state.activeCategory == LibraryCategory.Tags
+    val insideTag = state.activeCategory is LibraryCategory.Tag
     val query by viewModel.query.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val folderWriteRequest by viewModel.folderWriteRequest.collectAsStateWithLifecycle()
@@ -144,19 +154,29 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
-    var searching by remember { mutableStateOf(false) }
+    var searching by rememberSaveable { mutableStateOf(false) }
     var detailBook by remember { mutableStateOf<BookCard?>(null) }
+    var contentsBook by remember { mutableStateOf<BookCard?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var confirmRestore by remember { mutableStateOf(false) }
     var confirmDeleteBook by remember { mutableStateOf<BookCard?>(null) }
     var showCreateLibrary by remember { mutableStateOf(false) }
     var manageLibrariesBook by remember { mutableStateOf<BookCard?>(null) }
-    BackHandler(enabled = folder != null && drawerState.isClosed && !searching && detailBook == null) {
-        viewModel.parentFolder()
+    val goUp = {
+        if (insideTag) viewModel.setCategory(LibraryCategory.Tags) else viewModel.parentFolder()
+    }
+    BackHandler(enabled = (folder != null || insideTag) && drawerState.isClosed && !searching && detailBook == null) {
+        goUp()
     }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val closeSearch = {
+        viewModel.setQuery("")
+        searching = false
+        keyboard?.hide()
+    }
+    BackHandler(enabled = searching && drawerState.isClosed) { closeSearch() }
     val exportBackup = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri -> if (uri != null) viewModel.exportBackup(uri) }
@@ -201,10 +221,14 @@ fun LibraryScreen(
                     ),
                     navigationIcon = {
                         IconButton(onClick = {
-                            if (folder != null) viewModel.parentFolder() else scope.launch { drawerState.open() }
+                            if (folder != null || insideTag) goUp() else scope.launch { drawerState.open() }
                         }) {
-                            Icon(if (folder != null) Icons.AutoMirrored.Outlined.ArrowBack else Icons.AutoMirrored.Outlined.Toc,
-                                contentDescription = if (folder != null) "Parent folder" else "Menu")
+                            Icon(if (folder != null || insideTag) Icons.AutoMirrored.Outlined.ArrowBack else Icons.AutoMirrored.Outlined.Toc,
+                                contentDescription = when {
+                                    folder != null -> "Parent folder"
+                                    insideTag -> "Back to tags"
+                                    else -> "Menu"
+                                })
                         }
                     },
                     title = {
@@ -215,7 +239,7 @@ fun LibraryScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .focusRequester(focusRequester),
-                                placeholder = { Text("Search title, author or folder") },
+                                placeholder = { Text(if (browsingTags) "Search tags" else "Search books or tags") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
@@ -233,7 +257,9 @@ fun LibraryScreen(
                                         overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        if (browsingFolders) "${state.folders.size} folders · ${state.counts[LibraryFilter.ALL] ?: 0} books" else "${state.counts[LibraryFilter.ALL] ?: 0} books",
+                                        if (browsingTags) "${state.tags.size} tags"
+                                        else if (browsingFolders) "${state.folders.size} folders · ${state.counts[LibraryFilter.ALL] ?: 0} books"
+                                        else "${state.counts[LibraryFilter.ALL] ?: 0} books",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = ShelfColors.Muted,
                                     )
@@ -243,12 +269,13 @@ fun LibraryScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { viewModel.setCategory(LibraryCategory.Folders) }) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = "Browse folders")
+                        if (!searching) {
+                            IconButton(onClick = { viewModel.setCategory(LibraryCategory.Folders) }) {
+                                Icon(Icons.Outlined.FolderOpen, contentDescription = "Browse folders")
+                            }
                         }
                         IconButton(onClick = {
-                            if (searching) viewModel.setQuery("")
-                            searching = !searching
+                            if (searching) closeSearch() else searching = true
                         }) {
                             Icon(
                                 if (searching) Icons.Outlined.Close else Icons.Outlined.Search,
@@ -274,7 +301,7 @@ fun LibraryScreen(
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
 
-                FilterRow(
+                if (!browsingTags) FilterRow(
                     selected = state.filter,
                     counts = state.counts,
                     onSelect = viewModel::setFilter,
@@ -321,9 +348,22 @@ fun LibraryScreen(
                     when {
                         state.loading -> CenteredBox { CircularProgressIndicator(color = ShelfColors.Rose) }
 
+                        browsingTags && state.tags.isNotEmpty() -> TagBrowser(state.tags) {
+                            closeSearch()
+                            viewModel.setCategory(LibraryCategory.Tag(it))
+                        }
+
+                        browsingTags -> EmptyState(
+                            heading = if (query.isBlank()) "No tags yet" else "No matching tags",
+                            body = if (query.isBlank()) "Rescan to read tags from your EPUBs and TangThu catalog."
+                            else "Try another tag name.",
+                            actionLabel = if (query.isBlank()) "Rescan folders" else null,
+                            onAction = { viewModel.rescan(false) },
+                        )
+
                         browsingFolders && (state.books.isNotEmpty() || (state.folders.isNotEmpty() && (folder == null || query.isBlank()))) -> BookGrid(
                             books = state.books, density = state.density, settings = state.settings,
-                            coverPath = viewModel::coverPath, onOpen = onOpenBook, onDetails = { detailBook = it },
+                            coverPath = viewModel::coverPath, onDetails = { detailBook = it },
                             onFavorite = viewModel::toggleFavorite,
                             folders = if (folder != null && query.isNotBlank()) emptyList() else state.folders,
                             onOpenFolder = { viewModel.setCategory(it.category) },
@@ -359,9 +399,10 @@ fun LibraryScreen(
                             density = state.density,
                             settings = state.settings,
                             coverPath = viewModel::coverPath,
-                            onOpen = onOpenBook,
+                            onResume = { onOpenBook(it, null, "") },
                             onDetails = { detailBook = it },
                             onFavorite = viewModel::toggleFavorite,
+                            continueReading = state.continueReading.takeUnless { searching },
                         )
                     }
                 }
@@ -369,15 +410,47 @@ fun LibraryScreen(
         }
     }
 
-    detailBook?.let { book ->
+    val previewing = contentsBook
+    if (previewing != null) {
+        val result by produceState<Result<List<TocEntry>>?>(null, previewing.id) {
+            value = try {
+                Result.success(viewModel.bookContents(previewing.id))
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Result.failure(error)
+            }
+        }
+        ContentsSheet(
+            toc = result?.getOrNull().orEmpty(),
+            currentChapter = previewing.chapter ?: -1,
+            onDismiss = { contentsBook = null },
+            onSelect = {
+                contentsBook = null
+                detailBook = null
+                onOpenBook(previewing.id, it.spineIndex, it.fragment)
+            },
+            loading = result == null,
+            error = result?.exceptionOrNull()?.let { "Could not open the contents list." },
+        )
+    } else detailBook?.let { selected ->
+        val book = remember(selected, state.books) { state.books.firstOrNull { it.id == selected.id } ?: selected }
         BookDetailSheet(
             book = book,
             coverPath = viewModel.coverPath(book.coverFile),
-            showCover = !state.settings.hideThumbnails,
             onDismiss = { detailBook = null },
-            onRead = {
+            onStart = {
                 detailBook = null
-                onOpenBook(book.id)
+                onOpenBook(book.id, 0, "")
+            },
+            onContinue = {
+                detailBook = null
+                onOpenBook(book.id, null, "")
+            },
+            onContents = { contentsBook = book },
+            onTag = {
+                detailBook = null
+                closeSearch()
+                viewModel.setCategory(LibraryCategory.Tag(it))
             },
             onFavorite = { viewModel.toggleFavorite(book.id) },
             onResetProgress = {
@@ -528,6 +601,15 @@ private fun LibraryDrawer(
             icon = { Icon(Icons.Outlined.GridView, null) },
             modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
             colors = drawerItemColors()
+        )
+
+        NavigationDrawerItem(
+            label = { Text("Tags") },
+            selected = state.activeCategory == LibraryCategory.Tags || state.activeCategory is LibraryCategory.Tag,
+            onClick = { onSelect(LibraryCategory.Tags) },
+            icon = { Icon(Icons.AutoMirrored.Outlined.Label, null) },
+            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            colors = drawerItemColors(),
         )
 
         if (state.duplicateCount > 0) {
@@ -900,7 +982,8 @@ private fun ScanBanner(state: LibraryUiState) {
         Text(
             when {
                 scan.error.isNotEmpty() -> "Scan problem: ${scan.error}"
-                scan.found > 0 -> "Reading ${scan.done} of ${scan.found} — ${scan.current}"
+                scan.found > 0 -> "Checking books · ${scan.done} of ${scan.found}"
+                scan.current.isNotBlank() -> scan.current
                 else -> "Looking for books…"
             },
             style = MaterialTheme.typography.bodySmall,
@@ -931,16 +1014,41 @@ private fun ScanBanner(state: LibraryUiState) {
 // --------------------------------------------------------------------- grid
 
 @Composable
+private fun TagBrowser(tags: List<LibraryTag>, onSelect: (String) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(tags, key = { it.name }) { tag ->
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(ShelfColors.Panel)
+                    .clickable { onSelect(tag.name) }.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.Label, null, tint = ShelfColors.Rose)
+                Text(tag.name, modifier = Modifier.weight(1f), color = ShelfColors.Text)
+                Text(if (tag.count == 1) "1 book" else "${tag.count} books", color = ShelfColors.Muted,
+                    style = MaterialTheme.typography.bodySmall)
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, tint = ShelfColors.Muted)
+            }
+        }
+    }
+}
+
+@Composable
 private fun BookGrid(
     books: List<BookCard>,
     density: GridDensity,
     settings: ReaderSettings,
     coverPath: (String?) -> String?,
-    onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
     folders: List<LibraryFolderEntry> = emptyList(),
     onOpenFolder: (LibraryFolderEntry) -> Unit = {},
+    continueReading: BookCard? = null,
+    onResume: (String) -> Unit = {},
 ) {
     val cells = when (density) {
         GridDensity.ADAPTIVE -> GridCells.Adaptive(minSize = 116.dp)
@@ -955,6 +1063,11 @@ private fun BookGrid(
         verticalArrangement = Arrangement.spacedBy(if (density == GridDensity.LIST || density == GridDensity.DETAILED) 8.dp else 18.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
+        if (continueReading != null) {
+            item(key = "continue-reading", span = { GridItemSpan(maxLineSpan) }) {
+                ContinueReadingCard(continueReading, coverPath(continueReading.coverFile)) { onResume(continueReading.id) }
+            }
+        }
         items(folders, key = { "folder:${it.uri}:${com.shelf.reader.data.BookFolders.encode(it.path)}" },
             span = { GridItemSpan(maxLineSpan) }) { entry ->
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(ShelfColors.Panel)
@@ -964,18 +1077,47 @@ private fun BookGrid(
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(entry.name, color = ShelfColors.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${entry.books} books · gồm thư mục con", color = ShelfColors.Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("${entry.books} books including subfolders", color = ShelfColors.Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text("›", color = ShelfColors.Muted)
             }
         }
         items(books, key = { it.id }) { book ->
+            val cover = coverPath(book.coverFile)
             when (density) {
-                GridDensity.LIST -> BookRow(book, settings, coverPath(book.coverFile), onOpen, onDetails, onFavorite)
-                GridDensity.DETAILED -> DetailedBookRow(book, settings, coverPath(book.coverFile), onOpen, onDetails, onFavorite)
-                else -> BookTile(book, settings, coverPath(book.coverFile), onOpen, onDetails, onFavorite)
+                GridDensity.LIST -> BookRow(book, settings, cover, onDetails, onFavorite)
+                GridDensity.DETAILED -> DetailedBookRow(book, settings, cover, onDetails, onFavorite)
+                else -> BookTile(book, settings, cover, onDetails, onFavorite)
             }
         }
+    }
+}
+
+@Composable
+private fun ContinueReadingCard(book: BookCard, cover: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(ShelfColors.Raised)
+            .clickable(onClickLabel = "Continue reading", onClick = onClick).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(width = 44.dp, height = 60.dp).clip(RoundedCornerShape(6.dp)).background(ShelfColors.Panel),
+            contentAlignment = Alignment.Center,
+        ) {
+            CoverImage(cover)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Continue reading", style = MaterialTheme.typography.labelMedium, color = ShelfColors.Rose)
+            Text(book.title, style = MaterialTheme.typography.titleSmall, color = ShelfColors.Text,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                LinearProgressIndicator(progress = { book.percent / 100f }, modifier = Modifier.weight(1f).height(3.dp),
+                    color = ShelfColors.Rose, trackColor = ShelfColors.Hair)
+                Text("${book.percent}%", style = MaterialTheme.typography.labelSmall, color = ShelfColors.Muted)
+            }
+        }
+        Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, tint = ShelfColors.Rose)
     }
 }
 
@@ -985,17 +1127,17 @@ private fun BookTile(
     book: BookCard,
     settings: ReaderSettings,
     cover: String?,
-    onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
 ) {
     if (settings.hideThumbnails) {
-        TextOnlyTile(book, settings, onOpen, onDetails, onFavorite)
+        TextOnlyTile(book, settings, onDetails, onFavorite)
         return
     }
     Column(
         Modifier.combinedClickable(
-            onClick = { onOpen(book.id) },
+            onClickLabel = "Book overview",
+            onClick = { onDetails(book) },
             onLongClick = { onDetails(book) },
         )
     ) {
@@ -1081,7 +1223,6 @@ private fun BookTile(
 private fun TextOnlyTile(
     book: BookCard,
     settings: ReaderSettings,
-    onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
 ) {
@@ -1092,7 +1233,8 @@ private fun TextOnlyTile(
             .background(ShelfColors.Panel)
             .border(1.dp, ShelfColors.Hair, RoundedCornerShape(8.dp))
             .combinedClickable(
-                onClick = { onOpen(book.id) },
+                onClickLabel = "Book overview",
+                onClick = { onDetails(book) },
                 onLongClick = { onDetails(book) },
             )
             .padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 2.dp),
@@ -1152,7 +1294,6 @@ private fun BookRow(
     book: BookCard,
     settings: ReaderSettings,
     cover: String?,
-    onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
 ) {
@@ -1162,7 +1303,8 @@ private fun BookRow(
             .clip(RoundedCornerShape(10.dp))
             .background(ShelfColors.Panel)
             .combinedClickable(
-                onClick = { onOpen(book.id) },
+                onClickLabel = "Book overview",
+                onClick = { onDetails(book) },
                 onLongClick = { onDetails(book) },
             )
             .padding(10.dp),
@@ -1175,7 +1317,7 @@ private fun BookRow(
                     .height(66.dp)
                     .clip(RoundedCornerShape(5.dp))
                     .background(ShelfColors.Raised),
-            ) { CoverImage(cover, book.title) }
+            ) { CoverImage(cover) }
 
             Spacer(Modifier.width(12.dp))
         }
@@ -1224,7 +1366,6 @@ private fun DetailedBookRow(
     book: BookCard,
     settings: ReaderSettings,
     cover: String?,
-    onOpen: (String) -> Unit,
     onDetails: (BookCard) -> Unit,
     onFavorite: (String) -> Unit,
 ) {
@@ -1234,7 +1375,8 @@ private fun DetailedBookRow(
             .clip(RoundedCornerShape(10.dp))
             .background(ShelfColors.Panel)
             .combinedClickable(
-                onClick = { onOpen(book.id) },
+                onClickLabel = "Book overview",
+                onClick = { onDetails(book) },
                 onLongClick = { onDetails(book) },
             )
             .padding(10.dp),
@@ -1247,7 +1389,7 @@ private fun DetailedBookRow(
                     .height(86.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(ShelfColors.Raised),
-            ) { CoverImage(cover, book.title) }
+            ) { CoverImage(cover) }
 
             Spacer(Modifier.width(14.dp))
         }
@@ -1316,27 +1458,32 @@ private fun formatSize(bytes: Long): String = when {
 }
 
 @Composable
-internal fun CoverImage(path: String?, title: String) {
+internal fun CoverImage(path: String?, title: String? = null, contentScale: ContentScale = ContentScale.Crop) {
     if (path != null) {
+        val context = LocalContext.current
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+            model = remember(context, path) { ImageRequest.Builder(context)
                 .data(java.io.File(path))
                 .crossfade(140)
-                .build(),
+                .build() },
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             modifier = Modifier.fillMaxSize(),
         )
     } else {
         Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.Center) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodySmall,
-                color = ShelfColors.Muted,
-                textAlign = TextAlign.Center,
-                maxLines = 5,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (title == null) {
+                Icon(Icons.AutoMirrored.Outlined.MenuBook, null, tint = ShelfColors.Rose)
+            } else {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ShelfColors.Muted,
+                    textAlign = TextAlign.Center,
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

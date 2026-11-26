@@ -41,6 +41,8 @@ data class BookEntity(
     val error: String? = null,
     /** JSON array of folder names relative to the selected root; null until the next scan of a legacy row. */
     @ColumnInfo(defaultValue = "NULL") val folderPath: String? = null,
+    @ColumnInfo(defaultValue = "'[]'") val subjects: List<String> = emptyList(),
+    @ColumnInfo(defaultValue = "'[]'") val catalogTags: List<String> = emptyList(),
 )
 
 @Entity(tableName = "progress")
@@ -131,7 +133,11 @@ data class BookCard(
     val lastChapter: String?,
     val favorite: Boolean,
     val folderPath: String? = null,
+    val subjects: List<String> = emptyList(),
+    val catalogTags: List<String> = emptyList(),
 ) {
+    val tags: List<String> get() = cleanBookTags(catalogTags + subjects)
+
     /** Whole-book completion, 0..100, matching the desktop app's calculation. */
     val percent: Int
         get() {

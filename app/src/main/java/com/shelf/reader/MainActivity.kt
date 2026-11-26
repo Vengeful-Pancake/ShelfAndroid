@@ -1,7 +1,9 @@
 package com.shelf.reader
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.tween
@@ -60,17 +62,23 @@ object Routes {
     const val LIBRARY = "library"
     const val FOLDERS = "folders"
     const val READER = "reader/{bookId}"
+    const val READER_CHAPTER = "reader/{bookId}/{chapter}?fragment={fragment}"
     const val OPDS = "opds"
     const val BROWSER = "browser"
     const val DICTIONARY = "dictionary"
-    fun reader(bookId: String) = "reader/$bookId"
+    fun reader(bookId: String, chapter: Int?, fragment: String) = if (chapter == null) "reader/$bookId" else {
+        "reader/$bookId/$chapter" + if (fragment.isEmpty()) "" else "?fragment=${Uri.encode(fragment)}"
+    }
 }
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(0x801B1B1B.toInt()),
+        )
         super.onCreate(savedInstanceState)
         setContent { ShelfTheme { ShelfNavigation() } }
     }
@@ -82,6 +90,7 @@ private fun ShelfNavigation() {
     val slide = tween<Float>(durationMillis = 180)
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
+    val inReader = route == Routes.READER || route == Routes.READER_CHAPTER
     val context = LocalContext.current
     val settingsStore = remember { ShelfApp.repository(context).settings }
     val settings by settingsStore.flow.collectAsStateWithLifecycle(initialValue = ReaderSettings())
@@ -97,7 +106,7 @@ private fun ShelfNavigation() {
     ) {
         Box(Modifier.fillMaxSize()) {
         Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
-            if (settings.navigationBarVisible) Row(
+            if (!inReader && settings.navigationBarVisible) Row(
                 Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer)
                     .windowInsetsPadding(WindowInsets.navigationBars).height((64 * settings.navigationBarScale).coerceAtLeast(48f).dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -140,7 +149,7 @@ private fun ShelfNavigation() {
         ) {
             composable(Routes.LIBRARY) {
                 LibraryScreen(
-                    onOpenBook = { nav.navigate(Routes.reader(it)) },
+                    onOpenBook = { id, chapter, fragment -> nav.navigate(Routes.reader(id, chapter, fragment)) },
                     onManageFolders = { nav.navigate(Routes.FOLDERS) },
                     onOpenOpds = { nav.navigate(Routes.OPDS) },
                     onOpenBrowser = { nav.navigate(Routes.BROWSER) },
@@ -156,18 +165,27 @@ private fun ShelfNavigation() {
                 BrowserScreen(onBack = { nav.popBackStack() }, onNavigationSettings = { navigationSettings = true })
             }
             composable(Routes.DICTIONARY) { DictionaryScreen() }
-            composable(
-                route = Routes.READER,
-                arguments = listOf(navArgument("bookId") { type = NavType.StringType }),
-            ) { entry ->
-                ReaderScreen(
-                    bookId = entry.arguments?.getString("bookId").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                )
+            for (readerRoute in listOf(Routes.READER, Routes.READER_CHAPTER)) {
+                val arguments = buildList {
+                    add(navArgument("bookId") { type = NavType.StringType })
+                    if (readerRoute == Routes.READER_CHAPTER) {
+                        add(navArgument("chapter") { type = NavType.IntType })
+                        add(navArgument("fragment") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        })
+                    }
+                }
+                composable(readerRoute, arguments = arguments) { entry ->
+                    ReaderScreen(
+                        bookId = entry.arguments?.getString("bookId").orEmpty(),
+                        onBack = { nav.popBackStack() },
+                    )
+                }
             }
         }
         }
-        if (!settings.navigationBarVisible) FilledTonalIconButton(
+        if (!inReader && !settings.navigationBarVisible) FilledTonalIconButton(
             onClick = { changeSettings { it.copy(navigationBarVisible = true) } },
             modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(4.dp).size(40.dp),
         ) { Icon(Icons.Outlined.KeyboardArrowUp, "Show bottom navigation") }

@@ -33,11 +33,14 @@ class FolderMigrationTest {
             db.execSQL("INSERT INTO progress VALUES ('book',3,0.25,'Saved chapter',999)")
             db.version = 3
         }
-        val migrated = Room.databaseBuilder(context, ShelfDatabase::class.java, name).addMigrations(ShelfDatabase.MIGRATION_3_4).build()
+        val migrated = Room.databaseBuilder(context, ShelfDatabase::class.java, name)
+            .addMigrations(ShelfDatabase.MIGRATION_3_4, ShelfDatabase.MIGRATION_4_5).build()
         try {
             assertTrue(migrated.dao().roots().single().includeSubfolders)
             assertEquals("Saved book", migrated.dao().book("book")!!.title)
             assertNull(migrated.dao().book("book")!!.folderPath)
+            assertTrue(migrated.dao().book("book")!!.subjects.isEmpty())
+            assertTrue(migrated.dao().book("book")!!.catalogTags.isEmpty())
             assertEquals(3, migrated.dao().progress("book")!!.chapter)
             assertEquals(.25f, migrated.dao().progress("book")!!.offset)
         } finally { migrated.close(); context.deleteDatabase(name) }

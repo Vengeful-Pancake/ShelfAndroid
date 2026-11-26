@@ -11,7 +11,7 @@ class ChineseTranslator(context: Context, private val settings: ReaderSettings, 
     private val names = NameStore.get(app)
     private val global = TranslationRule.parseAll(settings.globalTerms) + names.rules(storyKey, true, settings.globalNames)
     private val story = names.rules(storyKey, false)
-    private val engine by lazy { OrderedTranslation(bundled(app), global, story) }
+    private val engine by lazy { OrderedTranslation({ bundled(app) }, global, story) }
 
     fun annotated(text: String, original: Boolean = false): String {
         val out = StringBuilder()

@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.*
 import org.junit.Assert.*
 
+@OptIn(ExperimentalTestApi::class)
 class LibraryFoldersTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val tree = DocumentsContract.buildTreeDocumentUri("com.shelf.reader.test.folders", "root")
@@ -58,22 +59,25 @@ class LibraryFoldersTest {
 
     @Test fun browseNestedFoldersKeepsSameNamedBranchesSeparateAndCanGoBack() {
         compose.onNodeWithContentDescription("Browse folders").performClick()
+        compose.waitUntilExactlyOneExists(hasContentDescription("Open folder Folder fixture"), 10_000)
         compose.onNodeWithContentDescription("Open folder Folder fixture").performClick()
-        compose.onNodeWithText("Direct book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
         screenshot("subfolders-browse-0.3.7.png")
         compose.onNodeWithText("Fantasy nested book").assertDoesNotExist()
         compose.onNodeWithContentDescription("Open folder Fantasy").performClick()
-        compose.onNodeWithText("Fantasy book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy book"), 10_000)
         compose.onNodeWithContentDescription("Open folder Shared").performClick()
-        compose.onNodeWithText("Fantasy nested book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy nested book"), 10_000)
         screenshot("subfolders-nested-0.3.7.png")
         compose.onNodeWithText("Modern nested book").assertDoesNotExist()
         compose.onNodeWithContentDescription("Parent folder").performClick()
-        compose.onNodeWithText("Fantasy book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy book"), 10_000)
         compose.onNodeWithContentDescription("Parent folder").performClick()
+        compose.waitUntilExactlyOneExists(hasContentDescription("Open folder Modern"), 10_000)
         compose.onNodeWithContentDescription("Open folder Modern").performClick()
+        compose.waitUntilExactlyOneExists(hasContentDescription("Open folder Shared"), 10_000)
         compose.onNodeWithContentDescription("Open folder Shared").performClick()
-        compose.onNodeWithText("Modern nested book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Modern nested book"), 10_000)
         compose.onNodeWithText("Fantasy nested book").assertDoesNotExist()
     }
 
@@ -92,7 +96,7 @@ class LibraryFoldersTest {
         assertEquals(.45f, runBlocking { repository.dao.progress(nested.id)!!.offset })
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithContentDescription("Open folder Folder fixture").performClick()
-        compose.onNodeWithText("Direct book").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
         compose.onNodeWithText("Fantasy").assertDoesNotExist()
         compose.onNodeWithText("Scan options").performClick()
         compose.onNodeWithContentDescription("Include subfolders in Folder fixture").assertIsOff().performClick()
@@ -100,7 +104,7 @@ class LibraryFoldersTest {
         assertTrue(control("__queries").split(",").contains("aa"))
         assertEquals(2, runBlocking { repository.dao.progress(nested.id)!!.chapter })
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Fantasy").assertExists()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy"), 10_000)
     }
 
     @Test fun failedFolderListingDoesNotDeletePreviouslyIndexedBooks() {
@@ -126,5 +130,106 @@ class LibraryFoldersTest {
         assertEquals(listOf("Fantasy", "Shared"), BookFolders.decode(refreshed.folderPath))
         assertEquals(nested.stamp, refreshed.stamp)
         assertEquals(.7f, runBlocking { repository.dao.progress(nested.id)!!.offset })
+    }
+
+    @Test fun bookOverviewShowsCoverDescriptionAndReadingActions() {
+        compose.onNodeWithContentDescription("Browse folders").performClick()
+        val folderRow = hasContentDescription("Open folder Folder fixture")
+        compose.waitUntilExactlyOneExists(folderRow, 10_000)
+        compose.onNode(folderRow).performClick()
+        val directBookRow = hasText("Direct book") and hasClickAction() and !hasText("Continue reading")
+        compose.waitUntilExactlyOneExists(directBookRow, 10_000)
+        compose.onNode(directBookRow).performClick()
+        compose.onNodeWithText("Start reading").assertIsDisplayed()
+        compose.onNodeWithText("A journey that begins at the library.", substring = true).assertIsDisplayed()
+        screenshot("shelf-book-overview.png")
+        compose.onNodeWithContentDescription("Cover of Direct book").performClick()
+        compose.onNodeWithContentDescription("Close cover").performClick()
+        compose.onNodeWithContentDescription("Book menu").performClick()
+        compose.onNodeWithText("Add to library").assertIsDisplayed()
+        compose.onNodeWithText("Pin book").performClick()
+        compose.waitUntil(10_000) {
+            runBlocking { repository.dao.booksForRoot(tree.toString()).firstOrNull { it.title == "Direct book" }
+                ?.let { repository.dao.isFavorite(it.id) } == true }
+        }
+        compose.onNodeWithContentDescription("Book menu").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Unpin book"), 10_000)
+        compose.onNodeWithText("Unpin book").performClick()
+
+        compose.onNodeWithText("Start reading").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Chapter 1 · 1 of 2"), 15_000)
+        val back = hasContentDescription("Back to the library")
+        compose.onNode(back).performClick()
+        compose.waitUntilExactlyOneExists(directBookRow, 10_000)
+        compose.onNode(directBookRow).performClick()
+        compose.waitUntilExactlyOneExists(hasText("Start from beginning"), 10_000)
+        compose.onNodeWithText("Contents").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Chapter 2"), 10_000)
+        compose.onNodeWithText("Chapter 2").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Chapter 2 · 2 of 2"), 15_000)
+        compose.onNode(back).performClick()
+
+        compose.waitUntilExactlyOneExists(directBookRow, 10_000)
+        compose.onNode(directBookRow).performClick()
+        compose.onNode(hasText("Continue reading") and !hasText("Direct book")).assertIsDisplayed().performClick()
+        compose.waitUntilExactlyOneExists(hasText("Chapter 2 · 2 of 2"), 15_000)
+    }
+
+    @Test fun tagsSortAndBrowseAndCatalogEditsReuseCachedEpubMetadata() {
+        val direct = runBlocking { repository.dao.booksForRoot(tree.toString()).first { it.title == "Direct book" } }
+        assertEquals(listOf("Travel"), direct.subjects)
+        assertEquals(listOf("Zebra stories"), direct.catalogTags)
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Sort:", substring = true).performClick()
+        compose.onNodeWithText("Tags A–Z").performClick()
+        compose.waitUntil(10_000) {
+            runCatching {
+                val fantasy = compose.onNodeWithText("Fantasy nested book").getUnclippedBoundsInRoot().top
+                val tagged = compose.onNodeWithText("Direct book").getUnclippedBoundsInRoot().top
+                val untagged = compose.onNodeWithText("Modern nested book").getUnclippedBoundsInRoot().top
+                fantasy < tagged && tagged < untagged
+            }.getOrDefault(false)
+        }
+
+        val opens = control("__book_opens")
+        control("__edit_catalog")
+        repository.scanner.start()
+        compose.waitUntil(15_000) {
+            !repository.scanner.status.value.running &&
+                runBlocking { repository.dao.book(direct.id)?.catalogTags == listOf("New journeys") }
+        }
+        assertEquals(opens, control("__book_opens"))
+
+        compose.onNodeWithContentDescription("Menu").performClick()
+        compose.onNodeWithText("Tags").performClick()
+        compose.waitUntilExactlyOneExists(hasText("New journeys"), 10_000)
+        compose.onNodeWithText("New journeys").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
+        compose.onNodeWithText("Fantasy nested book").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back to tags").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Travel"), 10_000)
+    }
+
+    @Test fun resumeUsesMostRecentlyReadBookEvenWhenShelfIsSortedByTitle() {
+        runBlocking {
+            repository.settings.update { it.copy(sort = "title") }
+            val books = repository.dao.booksForRoot(tree.toString())
+            val older = books.first { it.title == "Direct book" }
+            val latest = books.first { it.title == "Modern nested book" }
+            val now = System.currentTimeMillis()
+            repository.dao.saveProgress(ProgressEntity(older.id, offset = .2f, at = now - 1000))
+            repository.dao.saveProgress(ProgressEntity(latest.id, offset = .4f, at = now))
+        }
+        val resume = hasText("Continue reading")
+        compose.waitUntilExactlyOneExists(resume and hasText("Modern nested book"), 10_000)
+        screenshot("shelf-continue-reading.png")
+        compose.onNode(resume).performClick()
+        val back = hasContentDescription("Back to the library")
+        compose.waitUntilExactlyOneExists(back, 10_000)
+        compose.waitUntilExactlyOneExists(hasText("Modern nested book"), 10_000)
+        compose.onNodeWithText("Internet").assertDoesNotExist()
+        compose.onNode(back).performClick()
+        compose.waitUntilExactlyOneExists(resume, 10_000)
+        compose.onNodeWithText("Internet").assertIsDisplayed()
     }
 }

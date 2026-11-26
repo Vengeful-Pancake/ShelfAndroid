@@ -158,8 +158,8 @@ editing, or deleting EPUB files outside Shelf.
 
 | Control | What it does |
 |---|---|
-| Three-line **library** button | Opens folders, detected series, duplicate books, and your custom libraries. |
-| **Search** | Finds books by title, author, filename, folder, or series. |
+| Three-line **library** button | Opens tags, folders, detected series, duplicate books, and your custom libraries. |
+| **Search** | Finds books by title, author, filename, folder, series, or tag. |
 | Three-dot **More** button | Opens sorting, display, backup, settings, browser, catalogue, folder, and rescan tools. |
 | **All** | Shows every book in the selected library/category. |
 | **Reading** | Shows books you have started but not finished. |
@@ -173,9 +173,9 @@ book card shows how far you have read.
 
 | Action | Result |
 |---|---|
-| Tap a cover/card | Opens the book at your last saved position. |
+| Tap or long-press a cover/card | Opens the book overview. |
 | Tap the star | Pins or unpins the book as a favourite. |
-| Long-press a cover/card | Opens the complete book-details and actions panel. |
+| Tap **Continue reading** at the top of All Books | Returns to your most recently read unfinished book. |
 | Pull down on the library | Starts a normal rescan. |
 
 A **Won't open** label means the EPUB is damaged, unsupported, or protected by
@@ -190,6 +190,7 @@ DRM. Shelf reads normal DRM-free EPUB 2 and EPUB 3 files; it cannot remove DRM.
 | **All Books** | Your complete indexed collection. |
 | **Duplicates** | Appears when Shelf finds books with matching title/author information. |
 | **Series** | Automatically groups books that contain series metadata. |
+| **Tags** | Lists tags from EPUBs and the TangThu Studio catalog. Tap a tag to see its books. |
 | **Folders** | Lets you view only the books from one source folder. |
 | **Custom Libraries** | Named collections you create yourself. Tap the **+** to create one. |
 
@@ -200,13 +201,17 @@ groups, such as “To Read”, “Research”, or “Favourites for the trip”.
 
 <p align="center"><img src="docs/images/14-book-details.png" width="390" alt="Shelf book details panel with read, pin, collection, and delete actions"></p>
 
-Long-press a book to see its title, author, description, series, language,
-chapter count, file size, source folder, reading progress, and last-opened date.
+Tap a book to see its cover, full description, tags, metadata, and reading progress.
+Tap a tag to browse matching books, or open the three-dot book menu for library actions.
 
 | Action | What it does |
 |---|---|
-| **Start/Continue reading** | Opens the book. |
-| **Pin/Pinned** | Adds or removes the favourite star. |
+| Tap the cover | Enlarges the cover. |
+| **Start reading** | Opens the first chapter. |
+| **Continue reading** | Returns to the saved reading position. |
+| **Start from beginning** | Restarts a book you've already opened. |
+| **Contents** | Opens the chapter list and lets you jump to a chapter. |
+| **Pin book / Unpin book** | Adds or removes the favourite star. |
 | **Add to library** | Adds or removes the book from one or more custom libraries. |
 | **Forget my place** | Clears the saved reading position and returns the book to Not started. |
 | **Delete from device** | Permanently deletes the source EPUB after confirmation, then removes its progress, bookmarks, highlights, statistics, and collection membership. |
@@ -222,7 +227,7 @@ deleted.
 
 | Menu item | What it does |
 |---|---|
-| **Sort** | Choose Recently read, Title A-Z, Author A-Z, Newest file, or Favourites first. |
+| **Sort** | Choose Recently read, Title A–Z, Author A–Z, Newest file, Favourites first, or Tags A–Z. |
 | **View** | Choose Fit to screen, Large, Medium, Small, or Tiny covers, List, or Detailed List. |
 | **Reading statistics** | Shows your streak, reading time, started books, and finished books. |
 | **Back up reading data** | Saves a portable JSON file containing your Shelf reading data and preferences. |
@@ -232,6 +237,9 @@ deleted.
 | **OPDS catalog** | Browses an OPDS 1 catalogue and saves selected EPUBs through Android's file picker. |
 | **Folders** | Adds, enables, disables, removes, or rescans source folders. |
 | **Rescan folders** | Looks for changed, added, or removed EPUBs now. |
+
+For TangThu Studio tags, place `book-pairs.json` at the root of the selected
+folder, keep the EPUBs at the paths recorded in the catalog, and rescan.
 
 ## Reading a book
 

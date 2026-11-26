@@ -60,6 +60,8 @@ fun ContentsSheet(
     currentChapter: Int,
     onDismiss: () -> Unit,
     onSelect: (TocEntry) -> Unit,
+    loading: Boolean = false,
+    error: String? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
@@ -83,7 +85,13 @@ fun ContentsSheet(
     ) {
         SheetHeader("Contents", onDismiss)
 
-        if (entries.isEmpty()) {
+        if (loading) {
+            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = ShelfColors.Rose)
+            }
+        } else if (error != null) {
+            EmptySheetNote(error)
+        } else if (entries.isEmpty()) {
             EmptySheetNote("This book has no contents list.")
         } else {
             LazyColumn(
@@ -91,7 +99,7 @@ fun ContentsSheet(
                 modifier = Modifier.heightIn(max = 520.dp).navigationBarsPadding(),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
-                items(entries.size, key = { entries[it].spineIndex * 1000 + it }) { i ->
+                items(entries.size) { i ->
                     val entry = entries[i]
                     val current = i == currentIndex
                     Row(

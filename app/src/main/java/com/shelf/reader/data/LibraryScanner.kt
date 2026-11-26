@@ -68,6 +68,10 @@ class LibraryScanner(
         }
     }
 
+    suspend fun refreshOutdatedBooks() {
+        if (dao.hasOutdatedBooks("$PARSER_REVISION:%")) start()
+    }
+
     fun cancel() {
         job?.cancel()
     }
@@ -90,11 +94,20 @@ class LibraryScanner(
         val modified: Long,
     )
 
+    private data class PendingBook(
+        val id: String,
+        val item: Found,
+        val stamp: String,
+        val cached: BookEntity?,
+        val catalogTags: List<String>,
+    )
+
     private suspend fun scan(force: Boolean) {
         val roots = dao.roots().filter { it.enabled }
         val found = ArrayList<Found>()
         val completedRoots = HashSet<String>()
         val errors = ArrayList<String>()
+        val catalogDocuments = HashMap<String, Uri>()
 
         for (root in roots) {
             currentCoroutineContext().ensureActive()
@@ -103,7 +116,7 @@ class LibraryScanner(
             val startId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
                 ?: continue
             try {
-                walk(root, treeUri, startId, root.name, found)
+                walk(root, treeUri, startId, root.name, found, catalogDocuments)
                 completedRoots.add(root.treeUri)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
@@ -111,41 +124,71 @@ class LibraryScanner(
             }
         }
 
+        val catalogs = HashMap<String, Map<String, List<String>>>()
+        for (root in roots) {
+            val catalogUri = catalogDocuments[root.treeUri]
+            if (catalogUri == null) {
+                if (root.treeUri in completedRoots) catalogs[root.treeUri] = emptyMap()
+                continue
+            }
+            try {
+                currentCoroutineContext().ensureActive()
+                catalogs[root.treeUri] = context.contentResolver.openInputStream(catalogUri)?.use(TagCatalog::read)
+                    ?: error("Cannot read ${TagCatalog.FILE_NAME}")
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                errors.add("${root.name}: ${error.message ?: "Cannot read ${TagCatalog.FILE_NAME}"}")
+            }
+        }
+
         _status.value = _status.value.copy(found = found.size, done = 0)
 
         // Do not prune cached books for disabled, disconnected or partially unreadable roots.
-        val existing = roots.filter { it.treeUri in completedRoots }.flatMap { root ->
-            dao.booksForRoot(root.treeUri).filter { book ->
-                root.includeSubfolders || BookFolders.decode(book.folderPath)?.isEmpty() == true ||
-                    (book.folderPath == null && book.folder == root.name)
-            }.map(BookEntity::id)
-        }.toSet()
+        val cachedBooks = HashMap<String, BookEntity>()
+        val existing = HashSet<String>()
+        for (root in roots) {
+            for (book in dao.booksForRoot(root.treeUri)) {
+                cachedBooks[book.docUri] = book
+                if (root.treeUri in completedRoots &&
+                    (root.includeSubfolders || BookFolders.decode(book.folderPath)?.isEmpty() == true ||
+                        (book.folderPath == null && book.folder == root.name))) {
+                    existing.add(book.id)
+                }
+            }
+        }
         val seen = HashSet<String>(found.size)
 
         coroutineScope {
-            found.chunked(16).forEach { chunk ->
+            found.chunked(64).forEach { chunk ->
                 currentCoroutineContext().ensureActive()
-                val jobs = chunk.map { item ->
-                    async(Dispatchers.IO) {
-                        val id = bookId(item.docUri.toString())
-                        val stamp = "$PARSER_REVISION:${item.modified}:${item.size}"
+                val batch = ArrayList<BookEntity>()
+                val pending = chunk.mapNotNull { item ->
+                    val docUri = item.docUri.toString()
+                    val cached = cachedBooks[docUri]
+                    val id = cached?.id ?: bookId(docUri)
+                    seen.add(id)
+                    val stamp = "$PARSER_REVISION:${item.modified}:${item.size}"
+                    val rootCatalog = catalogs[item.treeUri]
+                    val tags = when {
+                        rootCatalog == null -> cached?.catalogTags.orEmpty()
+                        rootCatalog.isEmpty() -> emptyList()
+                        else -> rootCatalog[TagCatalog.pathKey((item.folderPath + item.name).joinToString("/"))].orEmpty()
+                    }
 
-                        val cached = dao.book(id)
-                        if (cached != null && cached.stamp == stamp && !cached.broken && !force) {
-                            val metadata = cached.copy(treeUri = item.treeUri, source = item.source,
-                                folder = item.folder, folderPath = BookFolders.encode(item.folderPath))
-                            id to metadata.takeIf { it != cached }
-                        } else {
-                            id to readBook(id, item, stamp, cached)
-                        }
+                    if (cached == null || cached.stamp != stamp || cached.broken || force) {
+                        PendingBook(id, item, stamp, cached, tags)
+                    } else {
+                        val metadata = cached.copy(source = item.source, filename = item.name,
+                            folder = item.folder, folderPath = BookFolders.encode(item.folderPath), catalogTags = tags)
+                        if (metadata != cached) batch.add(metadata)
+                        null
                     }
                 }
-
-                val results = jobs.awaitAll()
-                val batch = mutableListOf<BookEntity>()
-                results.forEach { (id, entity) ->
-                    seen.add(id)
-                    if (entity != null) batch.add(entity)
+                // Limit concurrent EPUB reads while committing larger batches to Room.
+                for (group in pending.chunked(8)) {
+                    batch += group.map { pending ->
+                        async { readBook(pending, force) }
+                    }.awaitAll()
                 }
 
                 if (batch.isNotEmpty()) dao.upsertBooks(batch)
@@ -168,6 +211,7 @@ class LibraryScanner(
         documentId: String,
         folderName: String,
         out: MutableList<Found>,
+        catalogDocuments: MutableMap<String, Uri>,
         depth: Int = 0,
         folderPath: List<String> = emptyList(),
         visited: MutableSet<String> = HashSet(),
@@ -203,7 +247,11 @@ class LibraryScanner(
                     if (root.includeSubfolders) subfolders.add(childId to name)
                     continue
                 }
-                if (!name.lowercase().endsWith(".epub") || name.startsWith(".")) continue
+                if (depth == 0 && name.equals(TagCatalog.FILE_NAME, ignoreCase = true)) {
+                    catalogDocuments[root.treeUri] = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                    continue
+                }
+                if (!name.endsWith(".epub", ignoreCase = true) || name.startsWith(".")) continue
 
                 out.add(
                     Found(
@@ -214,7 +262,7 @@ class LibraryScanner(
                         folder = folderName,
                         folderPath = folderPath,
                         size = size,
-                        modified = modified / 1000,
+                        modified = modified,
                     )
                 )
             }
@@ -222,13 +270,14 @@ class LibraryScanner(
 
         // Recurse after closing the cursor so we never hold many open at once.
         for ((childId, name) in subfolders) {
-            walk(root, treeUri, childId, name, out, depth + 1, folderPath + name, visited)
+            walk(root, treeUri, childId, name, out, catalogDocuments, depth + 1, folderPath + name, visited)
         }
     }
 
     // ---------------------------------------------------------------- metadata
 
-    private fun readBook(id: String, item: Found, stamp: String, existing: BookEntity? = null): BookEntity {
+    private fun readBook(pending: PendingBook, force: Boolean): BookEntity {
+        val (id, item, stamp, existing, catalogTags) = pending
         val base = BookEntity(
             id = id,
             docUri = item.docUri.toString(),
@@ -239,14 +288,16 @@ class LibraryScanner(
             folderPath = BookFolders.encode(item.folderPath),
             stamp = stamp,
             size = item.size,
-            added = item.modified,
+            added = item.modified / 1000,
             title = item.name.substringBeforeLast('.'),
             coverFile = existing?.coverFile,
+            subjects = existing?.subjects.orEmpty(),
+            catalogTags = catalogTags,
         )
 
         var book: EpubBook? = null
         return try {
-            book = EpubOpener.open(context, item.docUri)
+            book = EpubOpener.open(context, item.docUri, stamp, force)
             val meta = book.meta
             val coverName = book.cover()?.let { (bytes, _) -> writeCover(id, bytes) } ?: base.coverFile
             base.copy(
@@ -256,6 +307,7 @@ class LibraryScanner(
                 language = meta.language,
                 publisher = meta.publisher,
                 description = meta.description,
+                subjects = cleanBookTags(meta.subjects),
                 chapters = meta.chapters,
                 coverFile = coverName,
                 broken = false,
@@ -296,11 +348,18 @@ class LibraryScanner(
 
     companion object {
         /** Bump when metadata/chapter classification changes so a normal refresh reparses books. */
-        private const val PARSER_REVISION = 2
+        private const val PARSER_REVISION = 3
 
         fun bookId(uri: String): String {
             val digest = MessageDigest.getInstance("SHA-1").digest(uri.toByteArray())
-            return digest.joinToString("") { "%02x".format(it) }.take(16)
+            val hex = "0123456789abcdef"
+            return buildString(16) {
+                for (index in 0 until 8) {
+                    val byte = digest[index].toInt() and 0xff
+                    append(hex[byte ushr 4])
+                    append(hex[byte and 0xf])
+                }
+            }
         }
     }
 }
