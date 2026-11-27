@@ -7,6 +7,8 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import com.shelf.reader.epub.EpubBook
 import com.shelf.reader.epub.EpubOpener
+import com.shelf.reader.epub.chapterKeys
+import com.shelf.reader.epub.chapterMoves
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -100,6 +102,7 @@ class LibraryScanner(
         val stamp: String,
         val cached: BookEntity?,
         val catalogTags: List<String>,
+        val editionKey: String,
     )
 
     private suspend fun scan(force: Boolean) {
@@ -124,7 +127,7 @@ class LibraryScanner(
             }
         }
 
-        val catalogs = HashMap<String, Map<String, List<String>>>()
+        val catalogs = HashMap<String, Map<String, TagCatalog.Edition>>()
         for (root in roots) {
             val catalogUri = catalogDocuments[root.treeUri]
             if (catalogUri == null) {
@@ -157,51 +160,63 @@ class LibraryScanner(
             }
         }
         val seen = HashSet<String>(found.size)
+        val currentUris = found.mapTo(HashSet()) { it.docUri.toString() }
+        val editions = found.associate { item ->
+            item.docUri.toString() to catalogs[item.treeUri]
+                ?.get(TagCatalog.pathKey((item.folderPath + item.name).joinToString("/")))
+        }
+        val editionCounts = currentUris.groupingBy { uri -> editions[uri]?.key ?: cachedBooks[uri]?.editionKey.orEmpty() }.eachCount()
+        val pastEditions = cachedBooks.values.filter {
+            it.editionKey.isNotBlank() && it.docUri !in currentUris && (!it.available || it.id in existing)
+        }.groupBy(BookEntity::editionKey)
 
         coroutineScope {
             found.chunked(64).forEach { chunk ->
                 currentCoroutineContext().ensureActive()
                 val batch = ArrayList<BookEntity>()
+                val moves = HashMap<String, Map<Int, Int>>()
                 val pending = chunk.mapNotNull { item ->
                     val docUri = item.docUri.toString()
-                    val cached = cachedBooks[docUri]
+                    val edition = editions[docUri]
+                    val editionKey = edition?.key ?: cachedBooks[docUri]?.editionKey.orEmpty()
+                    val renamed = pastEditions[editionKey]?.singleOrNull()?.takeIf { editionCounts[editionKey] == 1 }
+                    val cached = cachedBooks[docUri] ?: renamed
                     val id = cached?.id ?: bookId(docUri)
                     seen.add(id)
                     val stamp = "$PARSER_REVISION:${item.modified}:${item.size}"
                     val rootCatalog = catalogs[item.treeUri]
-                    val tags = when {
-                        rootCatalog == null -> cached?.catalogTags.orEmpty()
-                        rootCatalog.isEmpty() -> emptyList()
-                        else -> rootCatalog[TagCatalog.pathKey((item.folderPath + item.name).joinToString("/"))].orEmpty()
-                    }
+                    val tags = if (rootCatalog == null) cached?.catalogTags.orEmpty() else edition?.tags.orEmpty()
 
-                    if (cached == null || cached.stamp != stamp || cached.broken || force) {
-                        PendingBook(id, item, stamp, cached, tags)
+                    if (cached == null || cached.docUri != docUri || cached.stamp != stamp || cached.broken || force) {
+                        PendingBook(id, item, stamp, cached, tags, editionKey)
                     } else {
                         val metadata = cached.copy(source = item.source, filename = item.name,
-                            folder = item.folder, folderPath = BookFolders.encode(item.folderPath), catalogTags = tags)
+                            folder = item.folder, folderPath = BookFolders.encode(item.folderPath), catalogTags = tags,
+                            editionKey = editionKey, available = true)
                         if (metadata != cached) batch.add(metadata)
                         null
                     }
                 }
                 // Limit concurrent EPUB reads while committing larger batches to Room.
                 for (group in pending.chunked(8)) {
-                    batch += group.map { pending ->
-                        async { readBook(pending, force) }
-                    }.awaitAll()
+                    val parsed = group.map { pending -> async { readBook(pending, force) } }.awaitAll()
+                    group.zip(parsed).forEach { (request, book) ->
+                        batch += book
+                        val remap = chapterMoves(request.cached?.chapterKeys.orEmpty(), book.chapterKeys)
+                        if (remap.isNotEmpty()) moves[book.id] = remap
+                    }
                 }
 
-                if (batch.isNotEmpty()) dao.upsertBooks(batch)
+                if (batch.isNotEmpty()) dao.indexBooks(batch, moves)
                 _status.value = _status.value.copy(done = _status.value.done + chunk.size)
             }
         }
 
-        // Anything that vanished from disk leaves the library, along with its cover.
-        val gone = existing - seen
-        if (gone.isNotEmpty()) {
-            gone.chunked(400).forEach { dao.deleteBooks(it) }
-            gone.forEach { File(coverDir, "$it.jpg").delete() }
-        }
+        val gone = cachedBooks.values.filter { it.available && it.id in existing && it.id !in seen }
+        gone.filter { it.editionKey.isNotEmpty() }.map(BookEntity::id).chunked(400).forEach { dao.markBooksMissing(it) }
+        val unmapped = gone.filter { it.editionKey.isEmpty() }.map(BookEntity::id)
+        unmapped.chunked(400).forEach { dao.deleteBooks(it) }
+        unmapped.forEach { File(coverDir, "$it.jpg").delete() }
         if (errors.isNotEmpty()) _status.value = _status.value.copy(error = errors.joinToString("\n"))
     }
 
@@ -277,7 +292,7 @@ class LibraryScanner(
     // ---------------------------------------------------------------- metadata
 
     private fun readBook(pending: PendingBook, force: Boolean): BookEntity {
-        val (id, item, stamp, existing, catalogTags) = pending
+        val (id, item, stamp, existing, catalogTags, editionKey) = pending
         val base = BookEntity(
             id = id,
             docUri = item.docUri.toString(),
@@ -293,6 +308,8 @@ class LibraryScanner(
             coverFile = existing?.coverFile,
             subjects = existing?.subjects.orEmpty(),
             catalogTags = catalogTags,
+            editionKey = editionKey,
+            chapterKeys = existing?.chapterKeys.orEmpty(),
         )
 
         var book: EpubBook? = null
@@ -309,6 +326,7 @@ class LibraryScanner(
                 description = meta.description,
                 subjects = cleanBookTags(meta.subjects),
                 chapters = meta.chapters,
+                chapterKeys = book.chapterKeys(),
                 coverFile = coverName,
                 broken = false,
                 error = null,
@@ -319,6 +337,17 @@ class LibraryScanner(
         } finally {
             runCatching { book?.close() }
         }
+    }
+
+    internal suspend fun indexImport(id: String, file: File, filename: String) {
+        val source = "Imported EPUBs"
+        val item = Found(source, IMPORTED_ROOT, Uri.fromFile(file), filename, source, emptyList(), file.length(), file.lastModified())
+        val entry = readBook(PendingBook(id, item, "$PARSER_REVISION:${item.modified}:${item.size}", null, emptyList(), ""), false)
+        if (entry.broken || entry.chapters == 0) {
+            coverFile(entry.coverFile)?.delete()
+            throw IllegalArgumentException(entry.error ?: "This EPUB has no readable chapters.")
+        }
+        dao.indexImportedBook(entry)
     }
 
     /** Covers are stored downscaled — a thousand full-size jpegs is a lot of storage. */
@@ -347,8 +376,9 @@ class LibraryScanner(
     }.getOrNull()
 
     companion object {
+        const val IMPORTED_ROOT = "shelf:imports"
         /** Bump when metadata/chapter classification changes so a normal refresh reparses books. */
-        private const val PARSER_REVISION = 3
+        private const val PARSER_REVISION = 4
 
         fun bookId(uri: String): String {
             val digest = MessageDigest.getInstance("SHA-1").digest(uri.toByteArray())

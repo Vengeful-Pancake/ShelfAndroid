@@ -55,7 +55,7 @@ object ReaderHtml {
         if (chapterLabel.isNotBlank()) {
             append("<div class=\"chapter-head\">").append(escape(transform(chapterLabel))).append("</div>")
         }
-        append(transform(bodyHtml))
+        append("<div class=\"shelf-chapter-body\">").append(transform(bodyHtml)).append("</div>")
         append("</section>")
     }
 
@@ -150,6 +150,7 @@ h1{font-size:1.45em}h2{font-size:1.25em}h3{font-size:1.1em}h4{font-size:1em}
 blockquote{margin:1.3em 0;padding-left:1.1em;border-left:3px solid currentColor;opacity:.82}
 hr{border:0;border-top:1px solid currentColor;opacity:.22;margin:2em 0}
 mark.shelf-highlight{background:rgba(221,143,174,.6);color:inherit;padding:0 2px;border-radius:2px;box-shadow:0 0 0 1px rgba(221,143,174,.8)}
+::highlight(shelf-search){background:#ffca68;color:#18151b}
 table{width:100%;border-collapse:collapse;margin:1.2em 0;font-size:.92em;display:block;overflow-x:auto}
 td,th{border:1px solid var(--rule);padding:6px 9px}
 a{color:inherit;text-decoration:underline;text-underline-offset:2px}
@@ -196,7 +197,7 @@ sup,sub{line-height:0}
      * detector on a WebView means fighting it for every scroll; doing it here keeps
      * link taps, text selection and scrolling behaving normally.
      */
-    private const val SCRIPT = """
+    private val SCRIPT = """
 <script>
 (function(){
   var lastSent = -1, ticking = false, lastY = 0, lastSection = null;
@@ -388,6 +389,45 @@ sup,sub{line-height:0}
     var el = document.getElementById('epub-' + id);
     if (el) { el.scrollIntoView(true); lastY = window.scrollY; return true; }
     return false;
+  };
+
+  window.shelfJumpToMatch = function(index, offset, length){
+    var root = document.querySelector('section.shelf-sec[data-index="' + index + '"] .shelf-chapter-body');
+    if (!root || offset < 0 || length < 1) return false;
+    var blocks = new Set('${ReaderSearch.blocks.joinToString(" ")}'.split(' '));
+    var position = 0, space = false, startNode, endNode, startOffset, endOffset;
+    function separate(){ if (position > 0) space = true; }
+    function walk(node){
+      if (endNode) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        var value = node.nodeValue;
+        for (var i = 0; i < value.length && !endNode; i++) {
+          var code = value.charCodeAt(i);
+          if (code === 32 || code === 160 || (code >= 9 && code <= 13)) { separate(); continue; }
+          if (space) { position++; space = false; }
+          if (position === offset) { startNode = node; startOffset = i; }
+          if (position === offset + length - 1) { endNode = node; endOffset = i + 1; }
+          position++;
+        }
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      var tag = node.localName;
+      var block = blocks.has(tag);
+      if (block || tag === 'br') separate();
+      for (var child = node.firstChild; child && !endNode; child = child.nextSibling) walk(child);
+      if (block) separate();
+    }
+    walk(root);
+    if (!startNode || !endNode) return false;
+    var range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    if (window.CSS && CSS.highlights && typeof Highlight !== 'undefined') CSS.highlights.set('shelf-search', new Highlight(range));
+    var rect = range.getBoundingClientRect();
+    window.scrollBy(0, rect.top - window.innerHeight * 0.4);
+    lastY = window.scrollY;
+    return true;
   };
 
   window.shelfPage = function(dir){

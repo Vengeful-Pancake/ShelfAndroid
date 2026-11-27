@@ -250,7 +250,7 @@ fun SearchSheet(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(results, key = { "${it.chapter}:${it.snippet}" }) { result ->
+                items(results, key = { "${it.chapter}:${it.offset}" }) { result ->
                     Column(
                         Modifier
                             .fillMaxWidth()

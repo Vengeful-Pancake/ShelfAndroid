@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Shelf"
 include(":app")
+if (providers.gradleProperty("includeBenchmark").orNull == "true") include(":benchmark")

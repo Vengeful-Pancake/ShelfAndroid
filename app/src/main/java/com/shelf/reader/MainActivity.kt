@@ -1,6 +1,7 @@
 package com.shelf.reader
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -26,7 +27,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.withResumed
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.shelf.reader.data.ReaderSettings
 import androidx.compose.material.icons.Icons
@@ -44,6 +48,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -72,6 +79,7 @@ object Routes {
 }
 
 class MainActivity : ComponentActivity() {
+    private var incomingEpub by mutableStateOf<Uri?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -80,27 +88,62 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(0x801B1B1B.toInt()),
         )
         super.onCreate(savedInstanceState)
-        setContent { ShelfTheme { ShelfNavigation() } }
+        incomingEpub = intent.epubUri()
+        setContent { ShelfTheme { ShelfNavigation(incomingEpub) { incomingEpub = null } } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        incomingEpub = intent.epubUri()
+    }
+
+    private fun Intent.epubUri(): Uri? = data?.takeIf {
+        action == Intent.ACTION_VIEW && type == "application/epub+zip" && it.scheme == "content"
     }
 }
 
 @Composable
-private fun ShelfNavigation() {
+@OptIn(ExperimentalComposeUiApi::class)
+private fun ShelfNavigation(incomingEpub: Uri?, onImportHandled: () -> Unit) {
     val nav = rememberNavController()
     val slide = tween<Float>(durationMillis = 180)
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
+    val benchmarkBuild = BuildConfig.APPLICATION_ID.endsWith(".benchmark")
     val inReader = route == Routes.READER || route == Routes.READER_CHAPTER
     val context = LocalContext.current
-    val settingsStore = remember { ShelfApp.repository(context).settings }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val repository = remember { ShelfApp.repository(context) }
+    val settingsStore = repository.settings
     val settings by settingsStore.flow.collectAsStateWithLifecycle(initialValue = ReaderSettings())
     val scope = rememberCoroutineScope()
     var navigationSettings by remember { mutableStateOf(false) }
+    var importError by remember { mutableStateOf<String?>(null) }
     val changeSettings: ((ReaderSettings) -> ReaderSettings) -> Unit = { change -> scope.launch { settingsStore.update(change) }; Unit }
+
+    LaunchedEffect(incomingEpub) {
+        if (incomingEpub == null) return@LaunchedEffect
+        try {
+            val id = repository.importEpub(incomingEpub)
+            nav.currentBackStackEntryFlow.first()
+            lifecycle.withResumed {
+                if (nav.currentBackStackEntry?.destination?.route == Routes.LIBRARY) {
+                    nav.navigate(Routes.reader(id, null, ""))
+                } else {
+                    nav.navigate(Routes.reader(id, null, "")) { popUpTo(Routes.LIBRARY) }
+                }
+            }
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            importError = error.message ?: "Could not import the EPUB."
+        }
+        onImportHandled()
+    }
 
     Surface(
         modifier = Modifier
             .fillMaxSize()
+            .semantics { testTagsAsResourceId = benchmarkBuild }
             .background(MaterialTheme.colorScheme.background),
         color = MaterialTheme.colorScheme.background,
     ) {
@@ -194,5 +237,10 @@ private fun ShelfNavigation() {
 
     if (navigationSettings) com.shelf.reader.ui.NavigationSettingsDialog(settings, changeSettings) { navigationSettings = false }
 
-    com.shelf.reader.update.AppUpdateCoordinator()
+    importError?.let { message ->
+        AlertDialog(onDismissRequest = { importError = null }, title = { Text("Could not import EPUB") },
+            text = { Text(message) }, confirmButton = { TextButton(onClick = { importError = null }) { Text("Close") } })
+    }
+
+    if (!benchmarkBuild) com.shelf.reader.update.AppUpdateCoordinator()
 }

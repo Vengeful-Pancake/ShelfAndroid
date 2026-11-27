@@ -51,7 +51,7 @@ interface ShelfDao {
     @Query(
         """
         SELECT b.id, b.docUri, b.treeUri, b.title, b.author, b.series,
-               b.language, b.publisher, b.description, b.source, b.filename, b.folder,
+               b.language, b.publisher, b.source, b.filename, b.folder,
                b.chapters, b.size, b.added, b.broken, b.coverFile, b.folderPath, b.subjects, b.catalogTags,
                p.chapter AS chapter, p.scrollOffset AS scrollOffset, p.at AS lastRead,
                p.title AS lastChapter,
@@ -59,9 +59,13 @@ interface ShelfDao {
         FROM books b
         LEFT JOIN progress p ON p.bookId = b.id
         LEFT JOIN favorites f ON f.bookId = b.id
+        WHERE b.available = 1
         """
     )
     fun observeCards(): Flow<List<BookCard>>
+
+    @Query("SELECT description FROM books WHERE id = :id")
+    fun observeBookDescription(id: String): Flow<String?>
 
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun book(id: String): BookEntity?
@@ -84,6 +88,42 @@ interface ShelfDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBooks(books: List<BookEntity>)
+
+    @Query("UPDATE books SET available = 0 WHERE id IN (:ids)")
+    suspend fun markBooksMissing(ids: List<String>)
+
+    @Transaction
+    suspend fun indexImportedBook(book: BookEntity) {
+        if (roots().none { it.treeUri == book.treeUri }) {
+            addRoot(RootEntity(book.treeUri, book.source, includeSubfolders = false))
+        }
+        upsertBooks(listOf(book))
+    }
+
+    @Query("SELECT * FROM smart_shelves ORDER BY name COLLATE NOCASE, id")
+    fun observeSmartShelves(): Flow<List<SmartShelfEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveSmartShelf(shelf: SmartShelfEntity): Long
+
+    @Query("UPDATE smart_shelves SET readingFilter = :filter WHERE id = :id")
+    suspend fun setSmartShelfReadingFilter(id: Long, filter: String)
+
+    @Query("UPDATE smart_shelves SET sort = :sort WHERE id = :id")
+    suspend fun setSmartShelfSort(id: Long, sort: String)
+
+    @Query("DELETE FROM smart_shelves WHERE id = :id")
+    suspend fun deleteSmartShelf(id: Long)
+
+    @Transaction
+    suspend fun indexBooks(books: List<BookEntity>, chapterMoves: Map<String, Map<Int, Int>>) {
+        for ((id, moves) in chapterMoves) {
+            progress(id)?.let { saved -> moves[saved.chapter]?.let { remapProgressChapter(id, it) } }
+            bookmarksForBook(id).forEach { saved -> moves[saved.chapter]?.let { remapBookmarkChapter(saved.id, it) } }
+            annotationsForBook(id).forEach { saved -> moves[saved.chapter]?.let { remapAnnotationChapter(saved.id, it) } }
+        }
+        upsertBooks(books)
+    }
 
     @Query("DELETE FROM books WHERE id IN (:ids)")
     suspend fun deleteBooks(ids: List<String>)
@@ -235,6 +275,7 @@ interface ShelfDao {
     /** Remove every local record owned by one book as a single database operation. */
     @Transaction
     suspend fun deleteBookData(bookId: String) {
+        val imported = book(bookId)?.treeUri == LibraryScanner.IMPORTED_ROOT
         clearProgress(bookId)
         deleteBookmarksForBook(bookId)
         deleteAnnotationsForBook(bookId)
@@ -242,6 +283,7 @@ interface ShelfDao {
         removeFavorite(bookId)
         removeBookFromAllLibraries(bookId)
         deleteBook(bookId)
+        if (imported && booksForRoot(LibraryScanner.IMPORTED_ROOT).isEmpty()) deleteRoot(LibraryScanner.IMPORTED_ROOT)
     }
 
     // --------------------------------------------------------------- backups
@@ -314,8 +356,9 @@ interface ShelfDao {
         FavoriteEntity::class,
         CustomLibraryEntity::class,
         LibraryBookJoinEntity::class,
+        SmartShelfEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(BookTagConverter::class)
@@ -336,6 +379,21 @@ abstract class ShelfDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
                 db.execSQL("ALTER TABLE books ADD COLUMN catalogTags TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN editionKey TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE books ADD COLUMN chapterKeys TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE books ADD COLUMN available INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS smart_shelves (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL,
+                        included TEXT NOT NULL, excluded TEXT NOT NULL, matchAny INTEGER NOT NULL,
+                        readingFilter TEXT NOT NULL, sort TEXT NOT NULL
+                    )
+                """.trimIndent())
             }
         }
 
@@ -376,7 +434,7 @@ abstract class ShelfDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShelfDatabase::class.java,
                 "shelf.db",
-            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
         }
     }
 }

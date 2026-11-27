@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -72,7 +73,8 @@ class FoldersViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = ShelfApp.repository(app)
 
     val roots: StateFlow<List<RootEntity>> =
-        repository.observeRoots().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        repository.observeRoots().map { roots -> roots.filterNot { it.treeUri == com.shelf.reader.data.LibraryScanner.IMPORTED_ROOT } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val scan: StateFlow<ScanStatus> = repository.scanner.status
 

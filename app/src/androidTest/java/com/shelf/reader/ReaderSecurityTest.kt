@@ -5,6 +5,7 @@ import android.webkit.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import com.shelf.reader.data.ReaderSettings
 import com.shelf.reader.ui.reader.ReaderHtml
+import com.shelf.reader.ui.reader.ReaderSearch
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -27,6 +28,37 @@ class ReaderSecurityTest {
         val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS or PackageManager.GET_PROVIDERS)
         assertFalse(info.requestedPermissions.orEmpty().contains("android.permission.REQUEST_INSTALL_PACKAGES"))
         assertFalse(info.providers.orEmpty().any { it.authority == "${context.packageName}.updates" })
+    }
+
+    @Test fun readerSearchJumpsToTheSecondOccurrenceAcrossInlineFormatting() {
+        val body = "<p id='first'>Old <b>library</b></p><p id='second'>Old&nbsp;<i>library</i></p>"
+        val second = ReaderSearch.hits(ReaderSearch.text(body), "old library").last()
+        val loaded = CountDownLatch(1)
+        lateinit var web: WebView
+        compose.runOnUiThread {
+            web = WebView(compose.activity).apply {
+                settings.javaScriptEnabled = true
+                addJavascriptInterface(Probe(), "Shelf")
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String) { loaded.countDown() }
+                }
+            }
+            val page = ReaderHtml.page(ReaderHtml.section(0, -1, "Chapter", body) { it }, ReaderSettings(), 0, 0)
+            web.loadDataWithBaseURL(ReaderHtml.ORIGIN + "/", page, "text/html", "UTF-8", null)
+        }
+        try {
+            assertTrue(loaded.await(30, TimeUnit.SECONDS))
+            val evaluated = CountDownLatch(1)
+            val result = AtomicReference("")
+            compose.runOnUiThread {
+                web.evaluateJavascript("""
+                    window.shelfJumpToMatch(0,$second,11) &&
+                    CSS.highlights.get('shelf-search').values().next().value.startContainer.parentElement.closest('p').id
+                """.trimIndent()) { result.set(it); evaluated.countDown() }
+            }
+            assertTrue(evaluated.await(10, TimeUnit.SECONDS))
+            assertEquals("\"second\"", result.get())
+        } finally { compose.runOnUiThread { web.destroy() } }
     }
 
     @Test fun readerCspBlocksUntrustedScriptsHandlersFramesAndFormNavigation() {

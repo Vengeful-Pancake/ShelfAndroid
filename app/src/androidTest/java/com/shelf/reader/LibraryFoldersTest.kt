@@ -3,10 +3,12 @@ package com.shelf.reader
 import android.net.Uri
 import android.content.Intent
 import android.provider.DocumentsContract
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import com.shelf.reader.data.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.*
 import org.junit.Assert.*
 
@@ -49,7 +51,9 @@ class LibraryFoldersTest {
     @After fun cleanup() {
         runBlocking {
             repository.scanner.cancelAndJoin()
-            repository.dao.booksForRoot(tree.toString()).forEach { repository.dao.clearProgress(it.id) }
+            repository.dao.booksForRoot(tree.toString()).forEach { repository.dao.deleteBookData(it.id) }
+            repository.dao.observeSmartShelves().first().filter { it.name == "Fixture smart shelf" }
+                .forEach { repository.dao.deleteSmartShelf(it.id) }
             repository.dao.removeRoot(tree.toString())
             if (::savedSettings.isInitialized) repository.settings.replace(savedSettings)
         }
@@ -141,7 +145,9 @@ class LibraryFoldersTest {
         compose.waitUntilExactlyOneExists(directBookRow, 10_000)
         compose.onNode(directBookRow).performClick()
         compose.onNodeWithText("Start reading").assertIsDisplayed()
-        compose.onNodeWithText("A journey that begins at the library.", substring = true).assertIsDisplayed()
+        val description = hasText("A journey that begins at the library.", substring = true)
+        compose.waitUntilExactlyOneExists(description, 10_000)
+        compose.onNode(description).assertIsDisplayed()
         screenshot("shelf-book-overview.png")
         compose.onNodeWithContentDescription("Cover of Direct book").performClick()
         compose.onNodeWithContentDescription("Close cover").performClick()
@@ -201,13 +207,139 @@ class LibraryFoldersTest {
         assertEquals(opens, control("__book_opens"))
 
         compose.onNodeWithContentDescription("Menu").performClick()
-        compose.onNodeWithText("Tags").performClick()
-        compose.waitUntilExactlyOneExists(hasText("New journeys"), 10_000)
-        compose.onNodeWithText("New journeys").performClick()
+        val tagsDestination = hasText("Tags") and hasClickAction()
+        compose.waitUntilExactlyOneExists(tagsDestination, 10_000)
+        compose.onNode(tagsDestination).performSemanticsAction(SemanticsActions.OnClick)
+        val refreshedTag = hasText("New journeys") and hasClickAction()
+        compose.waitUntilExactlyOneExists(refreshedTag, 10_000)
+        compose.onNode(refreshedTag).performClick()
         compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
         compose.onNodeWithText("Fantasy nested book").assertDoesNotExist()
         compose.onNodeWithContentDescription("Back to tags").performClick()
         compose.waitUntilExactlyOneExists(hasText("Travel"), 10_000)
+    }
+
+    @Test fun catalogEditionKeepsProgressAndMarksAcrossAReplacementExport() {
+        val original = runBlocking { repository.dao.booksForRoot(tree.toString()).first { it.filename == "direct.epub" } }
+        val otherEdition = runBlocking { repository.dao.booksForRoot(tree.toString()).first { it.editionKey == "zh_epub:trip" } }
+        runBlocking {
+            repository.dao.saveProgress(ProgressEntity(original.id, chapter = 1, offset = .42f, at = 1234))
+            repository.dao.addBookmark(BookmarkEntity(bookId = original.id, chapter = 0, offset = .3f))
+            repository.dao.addAnnotation(AnnotationEntity(bookId = original.id, chapter = 1, offset = .4f, quote = "old library"))
+            repository.dao.saveProgress(ProgressEntity(otherEdition.id, chapter = 0, offset = .8f, at = 1235))
+        }
+        control("__hide_edition")
+        repository.rescan()
+        compose.waitUntil(15_000) { runBlocking { repository.dao.book(original.id)?.available == false } && !repository.scanner.status.value.running }
+        control("__replace_edition")
+        repository.rescan()
+        compose.waitUntil(15_000) { runBlocking { repository.dao.book(original.id)?.filename == "renamed.epub" } && !repository.scanner.status.value.running }
+        runBlocking {
+            assertEquals(3, repository.dao.book(original.id)?.chapters)
+            assertEquals(2, repository.dao.progress(original.id)?.chapter)
+            assertEquals(.42f, repository.dao.progress(original.id)?.offset)
+            assertEquals(1, repository.dao.bookmarksForBook(original.id).single().chapter)
+            assertEquals(2, repository.dao.annotationsForBook(original.id).single().chapter)
+            assertEquals(.8f, repository.dao.progress(otherEdition.id)?.offset)
+        }
+    }
+
+    @Test fun openWithShelfMakesOneReadablePrivateCopy() {
+        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, "file-root")
+        val existingIds = runBlocking { repository.dao.booksForRoot(LibraryScanner.IMPORTED_ROOT).map { it.id }.toSet() }
+        try {
+            compose.activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setPackage(compose.activity.packageName)
+                setDataAndType(uri, "application/epub+zip")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+            compose.waitUntilExactlyOneExists(hasContentDescription("Back to the library"), 15_000)
+            runBlocking {
+                val imported = repository.dao.booksForRoot(LibraryScanner.IMPORTED_ROOT).single { it.id !in existingIds }
+                assertEquals(imported.id, repository.importEpub(uri))
+                assertEquals(existingIds.size + 1, repository.dao.booksForRoot(LibraryScanner.IMPORTED_ROOT).size)
+                assertEquals(2, repository.openBook(imported.id).chapterCount)
+                assertEquals("Direct book", imported.title)
+            }
+        } finally {
+            runBlocking {
+                repository.dao.booksForRoot(LibraryScanner.IMPORTED_ROOT).filter { it.id !in existingIds }.forEach {
+                    assertTrue(repository.deleteBookFromSource(it.id).success)
+                }
+            }
+        }
+    }
+
+    @Test fun smartShelfSavesTagRulesAndShowsLiveBookCount() {
+        val filters = hasText("Filter tags") and hasClickAction()
+        compose.waitUntilExactlyOneExists(filters, 10_000)
+        compose.onNode(filters).performClick()
+        compose.onNodeWithContentDescription("Include Travel").performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("Save shelf").performClick()
+        compose.waitUntilExactlyOneExists(hasText("1 matching book"), 10_000)
+        compose.onNode(hasSetTextAction()).performTextReplacement("Fixture smart shelf")
+        compose.waitUntilExactlyOneExists(hasText("Save shelf") and isEnabled(), 10_000)
+        compose.onNodeWithText("Save shelf").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntilExactlyOneExists(hasText("Fixture smart shelf") and !hasClickAction(), 10_000)
+        compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
+        compose.onNodeWithText("Fantasy book").assertDoesNotExist()
+        assertEquals(listOf("travel"), runBlocking { repository.dao.observeSmartShelves().first().single { it.name == "Fixture smart shelf" }.included })
+    }
+
+    @Test fun tagFilteringCombinesIncludesExcludesAndCanBeCleared() {
+        fun selectRule(description: String) {
+            val chip = compose.onNodeWithContentDescription(description)
+            chip.performSemanticsAction(SemanticsActions.OnClick)
+            chip.assertIsSelected()
+        }
+
+        val openFilters = hasText("Filter tags", substring = true) and hasClickAction()
+        compose.waitUntilExactlyOneExists(openFilters, 10_000)
+        compose.onNode(openFilters).performClick()
+        val tagSearch = hasSetTextAction() and hasText("Find a tag")
+        compose.onNode(tagSearch).performTextInput("Trav")
+        compose.onNodeWithContentDescription("Include Adventure").assertDoesNotExist()
+        compose.onNode(tagSearch).performImeAction()
+        selectRule("Include Travel")
+        compose.onNode(tagSearch).performTextClearance()
+        compose.onNode(tagSearch).performImeAction()
+        selectRule("Include Adventure")
+        compose.waitUntilExactlyOneExists(hasText("Apply filters (2)"), 10_000)
+        compose.onNodeWithText("Apply filters (2)").performClick()
+        compose.waitUntilExactlyOneExists(hasText("No books match"), 10_000)
+
+        compose.onNode(openFilters).performClick()
+        compose.onNodeWithText("All included").assertIsSelected()
+        compose.onNodeWithText("Any included").performClick()
+        selectRule("Exclude Zebra stories")
+        screenshot("shelf-tag-filters.png")
+        compose.onNodeWithText("Apply filters (3)").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy book"), 10_000)
+        compose.onNodeWithText("Direct book").assertDoesNotExist()
+        compose.onNodeWithText("Modern nested book").assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("Search").performClick()
+        compose.waitUntilExactlyOneExists(hasSetTextAction(), 10_000)
+        compose.onNode(hasSetTextAction()).performTextInput("Direct")
+        compose.waitUntilExactlyOneExists(hasText("No books match"), 10_000)
+        compose.onNodeWithContentDescription("Close search").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Fantasy book"), 10_000)
+
+        compose.onNode(openFilters).performClick()
+        compose.onNodeWithText("Clear all").performClick()
+        compose.onNodeWithContentDescription("Close tag filters").performClick()
+        compose.onNodeWithText("Fantasy book").assertIsDisplayed()
+        compose.onNodeWithText("Direct book").assertDoesNotExist()
+
+        compose.onNode(openFilters).performClick()
+        compose.onNodeWithText("Clear all").performClick()
+        compose.onNodeWithText("Apply filters").performClick()
+        compose.waitUntilExactlyOneExists(hasText("Filter tags") and hasClickAction(), 10_000)
+        compose.onNodeWithContentDescription("Search").performClick()
+        compose.waitUntilExactlyOneExists(hasSetTextAction(), 10_000)
+        compose.onNode(hasSetTextAction()).performTextInput("Direct")
+        compose.waitUntilExactlyOneExists(hasText("Direct book"), 10_000)
+        compose.onNodeWithContentDescription("Close search").performClick()
     }
 
     @Test fun resumeUsesMostRecentlyReadBookEvenWhenShelfIsSortedByTitle() {

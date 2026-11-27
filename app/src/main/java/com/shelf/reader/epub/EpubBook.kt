@@ -548,13 +548,11 @@ class EpubBook(private val zip: ZipReader) : Closeable {
             }
         }
 
-        val plain = soup.text()
         return Chapter(
             index = index,
             path = path,
             title = spineTitles[index].ifEmpty { docTitle }.ifEmpty { "Section ${index + 1}" },
             html = html,
-            words = Regex("\\w+").findAll(plain).count(),
         )
     }
 

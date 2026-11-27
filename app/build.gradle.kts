@@ -21,8 +21,8 @@ android {
         applicationId = "com.shelf.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.3.8"
+        versionCode = 14
+        versionName = "0.3.9"
         val updateRepository = providers.gradleProperty("updateRepository").orElse("Vengeful-Pancake/ShelfAndroid").get()
         require(updateRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
@@ -56,6 +56,12 @@ android {
                 "proguard-rules.pro"
             )
         }
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+        }
     }
 
     compileOptions {
@@ -86,6 +92,7 @@ ksp {
 }
 
 dependencies {
+    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

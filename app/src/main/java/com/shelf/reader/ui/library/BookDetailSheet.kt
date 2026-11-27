@@ -62,6 +62,7 @@ import com.shelf.reader.ui.theme.ShelfColors
 @Composable
 fun BookDetailSheet(
     book: BookCard,
+    description: String?,
     coverPath: String?,
     onDismiss: () -> Unit,
     onStart: () -> Unit,
@@ -167,7 +168,7 @@ fun BookDetailSheet(
                     onClick = if (book.started) onContinue else onStart,
                     icon = Icons.AutoMirrored.Outlined.MenuBook,
                     enabled = !book.broken,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Read this book" },
                 )
                 if (!book.broken) ShelfGhostButton(
                     text = "Contents",
@@ -186,12 +187,12 @@ fun BookDetailSheet(
                 if (book.broken) Text("Shelf could not open this EPUB.", color = ShelfColors.Danger)
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (description != null) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Description", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    book.description.ifBlank { "No description available." },
+                    description.ifBlank { "No description available." },
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (book.description.isBlank()) ShelfColors.Muted else ShelfColors.Text,
+                    color = if (description.isBlank()) ShelfColors.Muted else ShelfColors.Text,
                 )
             }
 

@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -83,7 +84,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.shelf.reader.R
-import com.shelf.reader.data.WordTransformer
+import com.shelf.reader.BuildConfig
+import com.shelf.reader.ShelfApp
 import com.shelf.reader.ui.theme.ShelfColors
 import java.io.ByteArrayInputStream
 import org.json.JSONArray
@@ -105,6 +107,9 @@ fun ReaderScreen(
 
     var sheet by remember { mutableStateOf<ReaderSheet?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var webViewReady by remember { mutableStateOf(false) }
+    val benchmark = BuildConfig.APPLICATION_ID.endsWith(".benchmark")
+    var readyRevision by remember(bookId) { mutableStateOf(-1L) }
     var pendingQuote by remember { mutableStateOf<String?>(null) }
     var pendingSwipeDirection by remember { mutableStateOf<Int?>(null) }
     val exportNotes = rememberLauncherForActivityResult(
@@ -117,7 +122,11 @@ fun ReaderScreen(
     val topPadDp = (insets.calculateTopPadding() + 60.dp).value.toInt()
     val bottomPadDp = (insets.calculateBottomPadding() + 80.dp).value.toInt()
 
-    LaunchedEffect(bookId) { viewModel.load(bookId) }
+    LaunchedEffect(bookId) {
+        viewModel.load(bookId)
+        (view.context.applicationContext as ShelfApp).readerWebViewStartup.await()
+        webViewReady = true
+    }
 
     LaunchedEffect(event) {
         when (val e = event) {
@@ -198,10 +207,6 @@ fun ReaderScreen(
     val localController = remember(bookId) { LocalReaderController(view.context, bookId, state.bookTitle) }
     LaunchedEffect(state.bookTitle) { localController.updateTitle(state.bookTitle) }
     DisposableEffect(localController) { onDispose { localController.close() } }
-    val transformer = remember(state.settings.wordReplacements, state.settings.wordReplacementsUri) {
-        WordTransformer(view.context, state.settings.wordReplacements, state.settings.wordReplacementsUri)
-    }
-
     // Saved highlights are re-marked when they change. Section changes during
     // continuous scrolling do not re-run this, so the page never jumps.
     LaunchedEffect(annotations, state.revision, state.loading) {
@@ -214,20 +219,12 @@ fun ReaderScreen(
     }
 
     // Continuous scrolling: sections the view model fetched go under the page.
-    val currentTransformer by rememberUpdatedState(transformer)
     val latestAnnotations by rememberUpdatedState(annotations)
     LaunchedEffect(webView, bookId) {
         val web = webView ?: return@LaunchedEffect
         viewModel.appends.collect { section ->
             if (web.getTag(R.id.shelf_chapter_revision) != (bookId to section.revision)) return@collect
-            val html = ReaderHtml.section(
-                section.index,
-                section.next,
-                section.label,
-                section.html,
-                currentTransformer::transform,
-            )
-            web.evaluateJavascript("window.shelfAppend(${section.index}, ${JSONObject.quote(html)})") {
+            web.evaluateJavascript("window.shelfAppend(${section.index}, ${JSONObject.quote(section.html)})") {
                 val pairs = highlightPairs(latestAnnotations, listOf(section.index), viewModel::sectionStart)
                 if (pairs.length() > 0) {
                     web.evaluateJavascript("window.shelfAddHighlights($pairs)", null)
@@ -240,13 +237,14 @@ fun ReaderScreen(
         Modifier
             .fillMaxSize()
             .background(pageColor)
+            .then(if (benchmark && readyRevision == state.revision) Modifier.testTag("shelf-chapter-ready") else Modifier)
     ) {
         // ------------------------------------------------------------ the page
 
         val currentState by rememberUpdatedState(state)
         val currentAnnotations by rememberUpdatedState(annotations)
 
-        AndroidView(
+        if (webViewReady) AndroidView(
             modifier = Modifier
                 .fillMaxSize()
                 // Do not leave the previous book visible behind the loading/error UI.
@@ -333,6 +331,12 @@ fun ReaderScreen(
                                             null,
                                         )
                                     }
+                                    target.restoreSearchHit?.let { hit ->
+                                        evaluateJavascript("window.shelfJumpToMatch(${hit.chapter}, ${hit.offset}, ${hit.query.length})", null)
+                                    }
+                                    if (benchmark) postVisualStateCallback(target.revision, object : WebView.VisualStateCallback() {
+                                        override fun onComplete(requestId: Long) { readyRevision = requestId }
+                                    })
                                 }
                             },
                         ),
@@ -408,13 +412,7 @@ fun ReaderScreen(
                     web.loadDataWithBaseURL(
                         ReaderHtml.ORIGIN + "/",
                         ReaderHtml.page(
-                            sectionHtml = ReaderHtml.section(
-                                index = state.pageIndex,
-                                next = state.pageNext,
-                                chapterLabel = state.pageLabel,
-                                bodyHtml = state.html,
-                                transform = transformer::transform,
-                            ),
+                            sectionHtml = state.html,
                             settings = state.settings,
                             topInsetPx = topPadDp,
                             bottomInsetPx = bottomPadDp,
@@ -436,7 +434,7 @@ fun ReaderScreen(
             onRelease = { it.destroy() },
         )
 
-        if (state.loading) {
+        if (state.loading || (!webViewReady && state.error == null)) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = textColor.copy(alpha = 0.6f))
             }

@@ -29,7 +29,9 @@ internal object TagCatalog {
 
     fun pathKey(path: String): String = Normalizer.normalize(path.replace('\\', '/'), Normalizer.Form.NFC).lowercase()
 
-    fun read(input: InputStream): Map<String, List<String>> {
+    data class Edition(val key: String, val tags: List<String>)
+
+    fun read(input: InputStream): Map<String, Edition> {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(32 * 1024)
         while (true) {
@@ -44,15 +46,18 @@ internal object TagCatalog {
         return buildMap {
             for (i in 0 until books.length()) {
                 val item = books.getJSONObject(i)
-                val tags = item.optJSONObject("tag_classification")?.optJSONArray("tags") ?: continue
-                val names = cleanBookTags(List(tags.length()) { tags.optJSONObject(it)?.optString("name").orEmpty() })
-                if (names.isEmpty()) continue
-                val files = item.getJSONObject("files")
+                val bookId = item.optString("id").trim()
+                val tags = item.optJSONObject("tag_classification")?.optJSONArray("tags")
+                val names = tags?.let { array -> cleanBookTags(List(array.length()) { array.optJSONObject(it)?.optString("name").orEmpty() }) }.orEmpty()
+                val files = item.optJSONObject("files") ?: continue
                 for (role in listOf("vi_epub", "zh_epub")) {
                     val editions = files.optJSONArray(role) ?: continue
                     for (j in 0 until editions.length()) {
                         val path = pathKey(editions.getString(j))
-                        put(path, cleanBookTags(get(path).orEmpty() + names))
+                        val key = if (bookId.isEmpty()) "" else "$role:$bookId"
+                        val previous = get(path)
+                        val unambiguous = if (previous == null || previous.key == key) key else ""
+                        put(path, Edition(unambiguous, cleanBookTags(previous?.tags.orEmpty() + names)))
                     }
                 }
             }

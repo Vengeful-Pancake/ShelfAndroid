@@ -34,7 +34,7 @@ class FolderMigrationTest {
             db.version = 3
         }
         val migrated = Room.databaseBuilder(context, ShelfDatabase::class.java, name)
-            .addMigrations(ShelfDatabase.MIGRATION_3_4, ShelfDatabase.MIGRATION_4_5).build()
+            .addMigrations(ShelfDatabase.MIGRATION_3_4, ShelfDatabase.MIGRATION_4_5, ShelfDatabase.MIGRATION_5_6).build()
         try {
             assertTrue(migrated.dao().roots().single().includeSubfolders)
             assertEquals("Saved book", migrated.dao().book("book")!!.title)

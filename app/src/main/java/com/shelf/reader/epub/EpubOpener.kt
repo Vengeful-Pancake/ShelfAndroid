@@ -22,7 +22,13 @@ object EpubOpener {
 
     private val cacheLock = Any()
 
-    fun open(context: Context, uri: Uri, version: String, refreshCache: Boolean = false): EpubBook {
+    fun open(
+        context: Context,
+        uri: Uri,
+        version: String,
+        refreshCache: Boolean = false,
+        sourceExists: (() -> Boolean)? = null,
+    ): EpubBook {
         val resolver = context.contentResolver
 
         // Fast path: seek directly inside the document.
@@ -48,6 +54,7 @@ object EpubOpener {
         }.onFailure { if (it is EpubException) throw it }
 
         // Slow path: copy once, then read from the copy.
+        if (sourceExists?.invoke() == false) throw EpubException("The file is no longer at that location")
         val copy = synchronized(cacheLock) { cacheCopy(context, uri, version, refreshCache) }
         val raf = RandomAccessFile(copy, "r")
         val closer = Closeable { runCatching { raf.close() } }

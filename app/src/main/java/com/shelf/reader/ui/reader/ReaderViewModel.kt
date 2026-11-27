@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.LruCache
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -11,6 +12,7 @@ import com.shelf.reader.ShelfApp
 import com.shelf.reader.data.AnnotationEntity
 import com.shelf.reader.data.BookmarkEntity
 import com.shelf.reader.data.ReaderSettings
+import com.shelf.reader.data.WordTransformer
 import com.shelf.reader.translation.ChineseTranslator
 import com.shelf.reader.translation.NameStore
 import com.shelf.reader.epub.EpubBook
@@ -33,7 +35,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
-import org.jsoup.Jsoup
 import java.util.Locale
 
 data class ReaderSearchResult(
@@ -41,14 +42,13 @@ data class ReaderSearchResult(
     val chapterTitle: String,
     val snippet: String,
     val query: String,
+    val offset: Int,
 )
 
 /** A section fetched for continuous scrolling, ready to go under the current page. */
 data class SectionAppend(
     val revision: Long,
     val index: Int,
-    val next: Int,
-    val label: String,
     val html: String,
 )
 
@@ -70,6 +70,7 @@ data class ReaderUiState(
     val restoreOffset: Float = 0f,
     val restoreFragment: String = "",
     val restoreHighlight: String = "",
+    val restoreSearchHit: ReaderSearchResult? = null,
     /** Bumped on every chapter load so the WebView reloads even for a repeat index. */
     val revision: Long = 0,
     val scrollFraction: Float = 0f,
@@ -82,10 +83,8 @@ data class ReaderUiState(
     val loadedSections: List<Int> = emptyList(),
     /** Reading-spine index of the chapter that follows [chapterIndex]. */
     val nextChapterIndex: Int = -1,
-    /** The section the page was built from, with its header label and follower. */
+    /** The section the page was built from. */
     val pageIndex: Int = 0,
-    val pageLabel: String = "",
-    val pageNext: Int = -1,
 ) {
     val wholeBookProgress: Float
         get() = if (chapterCount > 0) (chapterIndex + scrollFraction) / chapterCount else 0f
@@ -97,6 +96,12 @@ data class ReaderUiState(
 class ReaderViewModel(app: Application, private val savedState: SavedStateHandle) : AndroidViewModel(app) {
 
     private val repository = ShelfApp.repository(app)
+    private data class SearchKey(val id: String, val stamp: String, val chapter: Int, val translation: Boolean,
+        val names: String, val terms: String, val nameRevision: Long, val replacements: String)
+    private data class SearchChapter(val title: String, val text: String)
+    private val searchCache = object : LruCache<SearchKey, SearchChapter>(8_000_000) {
+        override fun sizeOf(key: SearchKey, value: SearchChapter) = value.text.length + value.title.length + 128
+    }
 
     private val _state = MutableStateFlow(ReaderUiState())
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
@@ -109,6 +114,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
     @Volatile private var book: EpubBook? = null
     private var translatedContents: TranslatedContents? = null
     private var chapterText: String = ""
+    private var chapterReplacements = WordTransformer(app, "")
     private val sectionTexts = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val sectionLabels = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val appendingSections = HashSet<Int>()
@@ -189,6 +195,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
             restoreOffset = 0f,
             restoreFragment = "",
             restoreHighlight = "",
+            restoreSearchHit = null,
             barsVisible = true,
             revision = _state.value.revision + 1,
             scrollFraction = 0f,
@@ -209,7 +216,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
                 return@launch
             }
 
-            val opened = runCatching { repository.openBook(id) }
+            val opened = runCatching { repository.openBook(entity) }
             val epub = opened.getOrElse { error ->
                 if (error is CancellationException) throw error
                 _state.value = _state.value.copy(
@@ -226,8 +233,9 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
             book = epub
             bookVersion = entity.stamp.ifBlank { entity.id }
 
+            repository.syncBookMetadata(id, epub)
             val progress = repository.progress(id)
-            val legacySpine = entity.chapters != epub.chapterCount && epub.auxiliarySections.isNotEmpty()
+            val legacySpine = entity.chapterKeys.isEmpty() && entity.chapters != epub.chapterCount && epub.auxiliarySections.isNotEmpty()
             val savedIndex = progress?.chapter ?: 0
             val startIndex = when {
                 epub.chapterCount <= 0 -> 0
@@ -239,7 +247,6 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
                 repository.remapProgressChapter(id, startIndex)
             }
             if (legacySpine) repository.remapSavedLocations(id, epub)
-            repository.syncBookMetadata(id, epub.meta)
             _state.value = _state.value.copy(
                 bookTitle = epub.meta.title.ifBlank { entity.title },
                 chapterCount = epub.chapterCount,
@@ -257,6 +264,9 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         viewModelScope.launch {
             repository.settings.flow.collect { settings ->
                 val previous = _state.value.settings
+                if (previous.wordReplacements != settings.wordReplacements || previous.wordReplacementsUri != settings.wordReplacementsUri) {
+                    chapterReplacements = WordTransformer(getApplication(), settings.wordReplacements, settings.wordReplacementsUri)
+                }
                 _state.value = _state.value.copy(settings = settings)
                 if (book != null && (previous.translationEnabled != settings.translationEnabled ||
                     previous.globalNames != settings.globalNames || previous.globalTerms != settings.globalTerms)) {
@@ -294,17 +304,20 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         forBook: String,
         version: String,
         translator: ChineseTranslator,
+        replacements: WordTransformer,
     ): SectionContent? {
         val resolver: (String) -> String = { path -> ReaderHtml.resourceUrl(forBook, version, path) }
         return runCatching {
             val chapter = epub.chapter(start, resolver)
-            val translatedHtml = translator.interactiveHtml(chapter.html)
+            val body = translator.interactiveBody(chapter.html)
+            val next = nextSection(epub, start)
+            val label = translator.plain(epub.tocLabelFor(start).ifBlank { chapter.title })
             SectionContent(
                 index = start,
-                next = nextSection(epub, start),
-                label = translator.plain(epub.tocLabelFor(start).ifBlank { chapter.title }),
-                html = translatedHtml,
-                text = Jsoup.parse(translatedHtml).text(),
+                next = next,
+                label = label,
+                html = ReaderHtml.section(start, next, label, body.html(), replacements::transform),
+                text = body.text(),
             )
         }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
@@ -323,6 +336,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         offset: Float = 0f,
         fragment: String = "",
         highlight: String = "",
+        searchHit: ReaderSearchResult? = null,
     ) {
         val epub = book ?: return
         if (index !in 0 until epub.chapterCount) return
@@ -339,12 +353,13 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         chapterJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
             val settings = _state.value.settings
+            val replacements = chapterReplacements
             val cachedContents = translatedContents
             val (content, contents) = withContext(Dispatchers.IO) {
                 val names = NameStore.get(getApplication())
                 val key = ContentsKey(names.revision.value, settings.globalNames, settings.globalTerms)
                 val translator = ChineseTranslator(getApplication(), settings, requestedBookId)
-                val section = readSection(epub, start, requestedBookId, requestedVersion, translator)
+                val section = readSection(epub, start, requestedBookId, requestedVersion, translator, replacements)
                 val translation = if (section != null && settings.translationEnabled) {
                     cachedContents?.takeIf { it.key == key } ?: TranslatedContents(
                         key, translator.plain(epub.meta.title), epub.toc.map {
@@ -383,11 +398,10 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
                 toc = contents?.toc ?: epub.toc,
                 html = content.html,
                 pageIndex = content.index,
-                pageLabel = content.label,
-                pageNext = content.next,
                 restoreOffset = restoreOffset,
                 restoreFragment = target,
                 restoreHighlight = highlight,
+                restoreSearchHit = searchHit,
                 barsVisible = true,
                 revision = _state.value.revision + 1,
                 scrollFraction = restoreOffset,
@@ -410,11 +424,12 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         val requestedVersion = bookVersion
         val revision = _state.value.revision
         val settings = _state.value.settings
+        val replacements = chapterReplacements
 
         appendJob = viewModelScope.launch {
             val content = withContext(Dispatchers.IO) {
                 val translator = ChineseTranslator(getApplication(), settings, requestedBookId)
-                readSection(epub, index, requestedBookId, requestedVersion, translator)
+                readSection(epub, index, requestedBookId, requestedVersion, translator, replacements)
             }
             synchronized(appendingSections) { appendingSections.remove(index) }
             if (content == null || bookId != requestedBookId || book !== epub) return@launch
@@ -426,7 +441,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
                 loadedSections = (_state.value.loadedSections + content.index).distinct(),
             )
             _appends.emit(
-                SectionAppend(revision, content.index, content.next, content.label, content.html)
+                SectionAppend(revision, content.index, content.html)
             )
         }
     }
@@ -464,7 +479,7 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
 
     fun searchBook(query: String) {
         searchJob?.cancel()
-        val needle = query.trim()
+        val needle = ReaderSearch.normalize(query)
         _state.value = _state.value.copy(searchQuery = query)
         val epub = book
         if (needle.length < 2 || epub == null) {
@@ -473,46 +488,51 @@ class ReaderViewModel(app: Application, private val savedState: SavedStateHandle
         }
 
         val requestedBookId = bookId
+        val version = bookVersion
+        val settings = _state.value.settings
         searchJob = viewModelScope.launch {
             _state.value = _state.value.copy(searchingBook = true, searchResults = emptyList())
             delay(180)
             val results = withContext(Dispatchers.IO) {
-                val translator = ChineseTranslator(getApplication(), _state.value.settings, requestedBookId)
-                val whitespace = Regex("\\s+")
+                val translator = ChineseTranslator(getApplication(), settings, requestedBookId)
+                val transformer = WordTransformer(getApplication(), settings.wordReplacements, settings.wordReplacementsUri)
+                val namesRevision = NameStore.get(getApplication()).revision.value
                 buildList {
                     for (index in 0 until epub.chapterCount) {
                         ensureActive()
-                        if (size >= 200) break
-                        val chapter = runCatching { epub.chapter(index) { "" } }.getOrNull() ?: continue
-                        val text = Jsoup.parse(translator.html(chapter.html)).text().replace(whitespace, " ")
-                        val match = text.indexOf(needle, ignoreCase = true)
-                        if (match < 0) continue
-                        val from = (match - 70).coerceAtLeast(0)
-                        val to = (match + needle.length + 110).coerceAtMost(text.length)
-                        val snippet = buildString {
-                            if (from > 0) append("…")
-                            append(text.substring(from, to).trim())
-                            if (to < text.length) append("…")
+                        if (size >= 500) break
+                        val key = SearchKey(requestedBookId, version, index, settings.translationEnabled, settings.globalNames,
+                            settings.globalTerms, namesRevision, settings.wordReplacements)
+                        val cacheable = settings.wordReplacementsUri.isNullOrEmpty()
+                        val indexed = (if (cacheable) searchCache.get(key) else null) ?: run {
+                            val chapter = runCatching { epub.chapter(index) { "" } }.getOrNull() ?: continue
+                            SearchChapter(translator.plain(epub.tocLabelFor(index).ifBlank { chapter.title }),
+                                ReaderSearch.text(transformer.transform(translator.interactiveHtml(chapter.html))))
+                                .also { if (cacheable) searchCache.put(key, it) }
                         }
-                        add(
-                            ReaderSearchResult(
-                                chapter = index,
-                                chapterTitle = translator.plain(epub.tocLabelFor(index).ifBlank { chapter.title }),
-                                snippet = snippet,
-                                query = needle,
-                            )
-                        )
+                        val text = indexed.text
+                        for (match in ReaderSearch.hits(text, needle).take(500 - size)) {
+                            ensureActive()
+                            val from = (match - 70).coerceAtLeast(0)
+                            val to = (match + needle.length + 110).coerceAtMost(text.length)
+                            val snippet = buildString {
+                                if (from > 0) append("…")
+                                append(text.substring(from, to).trim())
+                                if (to < text.length) append("…")
+                            }
+                            add(ReaderSearchResult(index, indexed.title, snippet, needle, match))
+                        }
                     }
                 }
             }
-            if (bookId == requestedBookId && book === epub && _state.value.searchQuery.trim() == needle) {
+            if (bookId == requestedBookId && book === epub && ReaderSearch.normalize(_state.value.searchQuery) == needle) {
                 _state.value = _state.value.copy(searchResults = results, searchingBook = false)
             }
         }
     }
 
     fun openSearchResult(result: ReaderSearchResult) {
-        openChapter(result.chapter, highlight = result.query)
+        openChapter(result.chapter, searchHit = result)
     }
 
     // ---------------------------------------------------------------- progress

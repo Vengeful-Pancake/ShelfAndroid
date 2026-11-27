@@ -4,17 +4,25 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import com.shelf.reader.epub.EpubBook
 import com.shelf.reader.epub.EpubException
-import com.shelf.reader.epub.EpubMeta
 import com.shelf.reader.epub.EpubOpener
+import com.shelf.reader.epub.chapterKeys
+import com.shelf.reader.epub.chapterMoves
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
+import java.security.MessageDigest
 
 data class BookDeletionResult(
     val success: Boolean,
@@ -45,6 +53,7 @@ class ShelfRepository(
         }
     }
     private val booksLock = Any()
+    private val importsLock = Mutex()
 
     // ------------------------------------------------------------------ books
 
@@ -55,8 +64,10 @@ class ShelfRepository(
     suspend fun bookEntity(id: String): BookEntity? = withContext(Dispatchers.IO) { dao.book(id) }
 
     /** Keep scanned metadata aligned with the parser when its classification rules improve. */
-    suspend fun syncBookMetadata(id: String, meta: EpubMeta) = withContext(Dispatchers.IO) {
+    suspend fun syncBookMetadata(id: String, opened: EpubBook) = withContext(Dispatchers.IO) {
         val current = dao.book(id) ?: return@withContext
+        val meta = opened.meta
+        val keys = opened.chapterKeys()
         val updated = current.copy(
             title = meta.title.ifBlank { current.title },
             author = meta.author,
@@ -66,20 +77,73 @@ class ShelfRepository(
             description = meta.description,
             subjects = cleanBookTags(meta.subjects),
             chapters = meta.chapters,
+            chapterKeys = keys,
         )
-        if (updated != current) dao.upsertBooks(listOf(updated))
+        if (updated != current) dao.indexBooks(listOf(updated), mapOf(id to chapterMoves(current.chapterKeys, keys)))
+    }
+
+    suspend fun importEpub(uri: Uri): String = withContext(Dispatchers.IO) {
+        require(uri.scheme == "content" && uri.authority != null) { "Choose an EPUB through Android’s file picker." }
+        val name = runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        }.getOrNull()?.trim()?.takeIf { it.endsWith(".epub", ignoreCase = true) } ?: "Imported book.epub"
+        importsLock.withLock {
+            val directory = File(context.filesDir, "imported-epubs").apply { mkdirs() }
+            val staged = File.createTempFile("epub-", ".partial", directory)
+            try {
+                val digest = MessageDigest.getInstance("SHA-256")
+                val coroutine = currentCoroutineContext()
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    staged.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            coroutine.ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            digest.update(buffer, 0, count)
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                } ?: error("Android could not open the selected EPUB.")
+                val hash = digest.digest().joinToString("") { "%02x".format(it) }
+                val id = "import-$hash"
+                val target = File(directory, "$hash.epub")
+                if (target.isFile && dao.book(id) != null) return@withLock id
+                if (!staged.renameTo(target)) error("Could not save the EPUB to Shelf.")
+                try {
+                    scanner.indexImport(id, target, name)
+                } catch (error: Exception) {
+                    withContext(NonCancellable) {
+                        if (dao.book(id) == null) target.delete()
+                    }
+                    throw error
+                }
+                id
+            } finally {
+                staged.delete()
+            }
+        }
     }
 
     suspend fun openBook(id: String): EpubBook = withContext(Dispatchers.IO) {
         synchronized(booksLock) { openBooks[id] }?.let { return@withContext it }
-
         val entry = dao.book(id) ?: throw EpubException("That book is not in the library")
-        val uri = Uri.parse(entry.docUri)
-        if (!documentExists(uri)) throw EpubException("The file is no longer at that location")
+        openBook(entry)
+    }
 
-        val book = EpubOpener.open(context, uri, entry.stamp)
-        synchronized(booksLock) { openBooks[id] = book }
-        book
+    internal suspend fun openBook(entry: BookEntity): EpubBook = withContext(Dispatchers.IO) {
+        synchronized(booksLock) { openBooks[entry.id] }?.let { return@withContext it }
+        val uri = Uri.parse(entry.docUri)
+        val book = try {
+            EpubOpener.open(context, uri, entry.stamp) { documentExists(uri) }
+        } catch (error: FileNotFoundException) {
+            throw EpubException("The file is no longer at that location", error)
+        }
+        val cached = synchronized(booksLock) { openBooks[entry.id] ?: book.also { openBooks[entry.id] = it } }
+        if (cached !== book) runCatching { book.close() }
+        cached
     }
 
     /**
@@ -199,6 +263,7 @@ class ShelfRepository(
     }
 
     private fun documentExists(uri: Uri): Boolean = runCatching {
+        if (uri.scheme == "file") return@runCatching uri.path?.let { File(it).isFile } == true
         DocumentFile.fromSingleUri(context, uri)?.exists() == true
     }.getOrDefault(true)
 

@@ -3,6 +3,7 @@ package com.shelf.reader.translation
 import android.content.Context
 import com.shelf.reader.data.ReaderSettings
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
 
 /** Offline Smooth Xianxia / QuickTranslator shared by EPUBs and the browser. Call off the UI thread. */
@@ -28,10 +29,12 @@ class ChineseTranslator(context: Context, private val settings: ReaderSettings, 
         .put("hv", phonetic(app).translate(text, cjkOnly = true)).put("smooth", bundled(app).translate(text, cjkOnly = true))
         .put("global", OrderedTranslation(bundled(app), global).translate(text)).put("story", engine.translate(text))
 
-    fun interactiveHtml(html: String): String {
-        val doc = Jsoup.parseBodyFragment(html)
+    fun interactiveHtml(html: String): String = interactiveBody(html).html()
+
+    internal fun interactiveBody(html: String): Element {
+        val body = Jsoup.parseBodyFragment(html).body()
         val nodes = ArrayList<TextNode>()
-        doc.body().traverse { node, _ -> if (node is TextNode && node.wholeText.any { it.isLetterOrDigit() } &&
+        body.traverse { node, _ -> if (node is TextNode && node.wholeText.any { it.isLetterOrDigit() } &&
             node.parent()?.nodeName() !in listOf("script", "style")) nodes.add(node) }
         nodes.forEach { node ->
             val source = node.wholeText
@@ -39,7 +42,7 @@ class ChineseTranslator(context: Context, private val settings: ReaderSettings, 
             wrapper.html(annotated(source, !settings.translationEnabled))
             node.replaceWith(wrapper)
         }
-        return doc.body().html()
+        return body
     }
 
     fun plain(text: String): String {

@@ -29,7 +29,7 @@ import com.shelf.reader.ui.theme.ShelfColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReadingStatsSheet(stats: ReadingStats, onDismiss: () -> Unit) {
+fun ReadingStatsSheet(stats: ReadingStats?, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -54,6 +54,10 @@ fun ReadingStatsSheet(stats: ReadingStats, onDismiss: () -> Unit) {
             Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (stats == null) {
+                Text("Loading reading statistics…", color = ShelfColors.Muted)
+                return@Column
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatCard("Current streak", "${stats.streakDays} days", Modifier.weight(1f))
                 StatCard("Last 7 days", formatDuration(stats.weekSeconds), Modifier.weight(1f))

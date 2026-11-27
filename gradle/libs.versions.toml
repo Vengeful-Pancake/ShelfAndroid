@@ -13,7 +13,7 @@ coil = "2.7.0"
 jsoup = "1.18.3"
 junit = "4.13.2"
 documentfile = "1.0.1"
-webkit = "1.12.1"
+webkit = "1.16.0"
 splashscreen = "1.0.1"
 
 [libraries]

@@ -28,7 +28,6 @@ data class Chapter(
     val path: String,
     val title: String,
     val html: String,
-    val words: Int,
 )
 
 /** The semantic role of an XHTML document in the EPUB package. */

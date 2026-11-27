@@ -43,6 +43,20 @@ data class BookEntity(
     @ColumnInfo(defaultValue = "NULL") val folderPath: String? = null,
     @ColumnInfo(defaultValue = "'[]'") val subjects: List<String> = emptyList(),
     @ColumnInfo(defaultValue = "'[]'") val catalogTags: List<String> = emptyList(),
+    @ColumnInfo(defaultValue = "''") val editionKey: String = "",
+    @ColumnInfo(defaultValue = "'[]'") val chapterKeys: List<String> = emptyList(),
+    @ColumnInfo(defaultValue = "1") val available: Boolean = true,
+)
+
+@Entity(tableName = "smart_shelves")
+data class SmartShelfEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val included: List<String>,
+    val excluded: List<String>,
+    val matchAny: Boolean,
+    val readingFilter: String,
+    val sort: String,
 )
 
 @Entity(tableName = "progress")
@@ -118,7 +132,6 @@ data class BookCard(
     val series: String,
     val language: String,
     val publisher: String,
-    val description: String,
     val source: String,
     val filename: String,
     val folder: String,

@@ -241,6 +241,23 @@ deleted.
 For TangThu Studio tags, place `book-pairs.json` at the root of the selected
 folder, keep the EPUBs at the paths recorded in the catalog, and rescan.
 
+Tap **Filter tags** to include or exclude several tags at once. **All included**
+requires every included tag, while **Any included** accepts one or more. A book
+with any excluded tag is hidden. Tag filters also work with book search and the
+reading-status filters. Use **Clear all** and **Apply filters** to reset them.
+
+Choose **Save shelf** in the tag filter or **More → Create smart shelf** to save
+tag rules, reading status, and sort order. Open it from **Smart shelves** in the
+library menu. The editor previews how many books match.
+
+Use **More → Import EPUB**, or open an EPUB with Shelf from Android Files, to
+read one file. These books appear in **Imported EPUBs** and use a private copy.
+
+When replacing a TangThu export, copy the updated `book-pairs.json` with the EPUB
+and rescan. Shelf can match a previously indexed edition by catalog ID and
+language role, then reconnect saved positions using chapter headings or paths.
+Keep a single current copy of an edition for unambiguous matching.
+
 ## Reading a book
 
 <p align="center"><img src="docs/images/06-reader.png" width="390" alt="Shelf reader with the top and bottom control bars visible"></p>
