@@ -244,6 +244,33 @@ class LibraryFoldersTest {
         }
     }
 
+    @Test fun refreshRestoresDescriptionForAnAlreadyImportedBook() {
+        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, "file-root")
+        val repo = repository
+        val id = runBlocking { repo.importEpub(uri) }
+        try {
+            runBlocking {
+                val book = repo.dao.book(id)!!
+                repo.dao.upsertBooks(listOf(book.copy(stamp = "4:0:0", description = "")))
+                repo.dao.saveProgress(ProgressEntity(id, chapter = 1, offset = .35f, at = 1234))
+                repo.scanner.refreshOutdatedBooks()
+            }
+            compose.waitUntil(30_000) {
+                isDescriptionRestored(repo, id) && !repo.scanner.status.value.running
+            }
+            runBlocking {
+                assertEquals(.35f, repo.dao.progress(id)?.offset)
+                assertEquals(1, repo.dao.progress(id)?.chapter)
+            }
+        } finally {
+            runBlocking { repo.deleteBookFromSource(id) }
+        }
+    }
+
+    private fun isDescriptionRestored(repo: ShelfRepository, id: String): Boolean = runBlocking {
+        repo.dao.book(id)?.description == "A journey that begins at the library.\n\nA story told in two chapters."
+    }
+
     @Test fun openWithShelfMakesOneReadablePrivateCopy() {
         val uri = DocumentsContract.buildDocumentUriUsingTree(tree, "file-root")
         val existingIds = runBlocking { repository.dao.booksForRoot(LibraryScanner.IMPORTED_ROOT).map { it.id }.toSet() }

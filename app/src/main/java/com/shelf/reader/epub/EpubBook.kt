@@ -38,6 +38,8 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         private val WHITESPACE = Regex("\\s+")
         private val COMBINING_MARKS = Regex("\\p{M}+")
         private val NON_LATIN_ALPHANUMERIC = Regex("[^a-z0-9]+")
+        private val DESCRIPTION_CREDIT = Regex("^(generated|created|converted|exported) by [a-z0-9][a-z0-9 ]{0,63}$")
+        private val DESCRIPTION_PLACEHOLDERS = setOf("no description", "no description available", "n a", "none")
 
         private val MIME_BY_EXTENSION = mapOf(
             "html" to "text/html", "xhtml" to "application/xhtml+xml", "htm" to "text/html",
@@ -369,13 +371,12 @@ class EpubBook(private val zip: ZipReader) : Closeable {
         if (value.isBlank()) return ""
         val body = Jsoup.parseBodyFragment(value).body()
         body.select("p, div, li, blockquote, h1, h2, h3, h4, h5, h6").forEach { it.after(TextNode("\n\n")) }
-        val description = body.wholeText().lineSequence().map(String::trim).joinToString("\n")
+        return body.wholeText().lineSequence().map(String::trim).dropWhile { line ->
+            // Exporters can leave a credit before the real description in the same field.
+            val key = semanticKey(line)
+            line.isBlank() || key in DESCRIPTION_PLACEHOLDERS || DESCRIPTION_CREDIT.matches(key)
+        }.joinToString("\n")
             .replace(Regex("\n{3,}"), "\n\n").trim()
-        val key = semanticKey(description)
-        return if (
-            key.matches(Regex("^(generated|created|converted|exported) by [a-z0-9 ]+$")) ||
-            key in setOf("no description", "n a", "none")
-        ) "" else description
     }
 
     private fun cleanMetadataText(value: String): String = Jsoup.parseBodyFragment(value)

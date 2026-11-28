@@ -144,14 +144,22 @@ class LibraryScanner(
             }
         }
 
-        _status.value = _status.value.copy(found = found.size, done = 0)
-
         // Do not prune cached books for disabled, disconnected or partially unreadable roots.
         val cachedBooks = HashMap<String, BookEntity>()
         val existing = HashSet<String>()
         for (root in roots) {
             for (book in dao.booksForRoot(root.treeUri)) {
+                currentCoroutineContext().ensureActive()
                 cachedBooks[book.docUri] = book
+                if (root.treeUri == IMPORTED_ROOT) {
+                    // File-picker imports are already stored in Shelf's private directory.
+                    val uri = Uri.parse(book.docUri)
+                    val file = uri.path?.takeIf { uri.scheme == "file" }?.let(::File)
+                    if (file?.isFile == true) {
+                        found.add(Found(root.name, root.treeUri, uri, book.filename, book.folder,
+                            emptyList(), file.length(), file.lastModified()))
+                    }
+                }
                 if (root.treeUri in completedRoots &&
                     (root.includeSubfolders || BookFolders.decode(book.folderPath)?.isEmpty() == true ||
                         (book.folderPath == null && book.folder == root.name))) {
@@ -159,6 +167,7 @@ class LibraryScanner(
                 }
             }
         }
+        _status.value = _status.value.copy(found = found.size, done = 0)
         val seen = HashSet<String>(found.size)
         val currentUris = found.mapTo(HashSet()) { it.docUri.toString() }
         val editions = found.associate { item ->
@@ -378,7 +387,7 @@ class LibraryScanner(
     companion object {
         const val IMPORTED_ROOT = "shelf:imports"
         /** Bump when metadata/chapter classification changes so a normal refresh reparses books. */
-        private const val PARSER_REVISION = 4
+        private const val PARSER_REVISION = 5
 
         fun bookId(uri: String): String {
             val digest = MessageDigest.getInstance("SHA-1").digest(uri.toByteArray())
